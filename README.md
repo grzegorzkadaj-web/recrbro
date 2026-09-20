@@ -97,8 +97,11 @@ volume for the single SQLite writer.
    `/web` root directory. Set
    `NEXT_PUBLIC_API_URL` as a build variable and `BACKEND_URL` as a runtime
    variable to the API's public HTTPS URL.
-3. Set `FRONTEND_ORIGIN` on the API to the web service's exact HTTPS origin and
-   `PUBLIC_API_URL` to the API's exact HTTPS origin.
+3. Set `FRONTEND_ORIGINS` on the API to the web service's exact HTTPS origin
+   (for example, `https://web-production-web.up.railway.app`) and
+   `PUBLIC_API_URL` to the API's exact HTTPS origin. Multiple allowed web
+   origins can be comma-separated; the first is used for OAuth and payment
+   redirects. The legacy singular `FRONTEND_ORIGIN` remains supported.
 4. Add a Railway cron service that runs every 15 minutes and invokes:
 
    ```sh

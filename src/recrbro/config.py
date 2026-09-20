@@ -23,7 +23,26 @@ OPENAI_OUTPUT_COST_PER_MILLION = float(
     os.getenv("OPENAI_OUTPUT_COST_PER_MILLION", "1.60")
 )
 USD_TO_PLN = float(os.getenv("USD_TO_PLN", "4.0"))
-FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+
+
+def _normalized_origins(value: str) -> tuple[str, ...]:
+    origins = tuple(
+        dict.fromkeys(
+            origin.strip().rstrip("/")
+            for origin in value.split(",")
+            if origin.strip().rstrip("/")
+        )
+    )
+    if not origins:
+        raise ValueError("At least one frontend origin must be configured.")
+    return origins
+
+
+FRONTEND_ORIGINS = _normalized_origins(
+    os.getenv("FRONTEND_ORIGINS")
+    or os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+)
+FRONTEND_ORIGIN = FRONTEND_ORIGINS[0]
 PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "http://127.0.0.1:8000")
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "168"))
 FREE_SEARCH_DELAY_MINUTES = int(os.getenv("FREE_SEARCH_DELAY_MINUTES", "60"))

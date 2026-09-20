@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from recrbro import api as api_module
 from recrbro import db, services
 from recrbro.api import app
+from recrbro.config import _normalized_origins
 
 
 @pytest.fixture
@@ -51,6 +52,27 @@ def test_profile_requires_authentication(client: TestClient) -> None:
     response = client.get("/api/profile")
 
     assert response.status_code == 401
+
+
+def test_frontend_origins_are_normalized() -> None:
+    assert _normalized_origins(
+        " https://web.example.com/, https://preview.example.com, "
+        "https://web.example.com "
+    ) == ("https://web.example.com", "https://preview.example.com")
+
+
+def test_registration_cors_preflight(client: TestClient) -> None:
+    response = client.options(
+        "/api/auth/register",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
 
 
 def test_user_can_register_and_access_own_profile(client: TestClient) -> None:

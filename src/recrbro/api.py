@@ -32,7 +32,7 @@ from recrbro.config import (
     APP_SECRET,
     FREE_SEARCH_DELAY_MINUTES,
     FREE_SEARCH_SCHEDULE_MINUTES,
-    FRONTEND_ORIGIN,
+    FRONTEND_ORIGINS,
     SEARCH_LEASE_MINUTES,
     WORKER_SECRET,
 )
@@ -94,7 +94,7 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_ORIGIN],
+    allow_origins=list(FRONTEND_ORIGINS),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
