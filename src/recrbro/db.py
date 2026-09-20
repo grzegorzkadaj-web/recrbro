@@ -11,7 +11,6 @@ from recrbro.config import DATABASE_PATH
 from recrbro.models import JobOffer, Profile, ProfileUpdate, UsageSummary, User
 
 LIST_FIELDS = {
-    "target_roles",
     "core_skills",
     "other_skills",
     "languages",
@@ -54,7 +53,6 @@ def initialize_database() -> None:
 
             CREATE TABLE IF NOT EXISTS profiles (
                 user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-                target_roles TEXT NOT NULL DEFAULT '[]',
                 core_skills TEXT NOT NULL DEFAULT '[]',
                 other_skills TEXT NOT NULL DEFAULT '[]',
                 languages TEXT NOT NULL DEFAULT '[]',
@@ -123,13 +121,12 @@ def initialize_database() -> None:
             database.execute(
                 """
                 INSERT OR IGNORE INTO profiles
-                    (user_id, target_roles, core_skills, other_skills, languages,
+                    (user_id, core_skills, other_skills, languages,
                      location, work_modes, contract_types, excluded_companies, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user_id,
-                    json.dumps(["Python Developer"]),
                     json.dumps(["Python"]),
                     json.dumps([]),
                     json.dumps(["English"]),
@@ -182,14 +179,13 @@ def update_profile(
         database.execute(
             """
             UPDATE profiles SET
-                target_roles = ?, core_skills = ?, other_skills = ?, languages = ?,
+                core_skills = ?, other_skills = ?, languages = ?,
                 location = ?, work_modes = ?, minimum_salary = ?, contract_types = ?,
                 excluded_companies = ?, cv_filename = COALESCE(?, cv_filename),
                 updated_at = ?
             WHERE user_id = ?
             """,
             (
-                json.dumps(values["target_roles"]),
                 json.dumps(values["core_skills"]),
                 json.dumps(values["other_skills"]),
                 json.dumps(values["languages"]),

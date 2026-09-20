@@ -38,7 +38,6 @@ def test_free_user_cannot_upload_cv(client: TestClient) -> None:
 
 def test_profile_can_be_updated(client: TestClient) -> None:
     payload = {
-        "target_roles": ["AI Engineer"],
         "core_skills": ["Python", "LangChain"],
         "other_skills": ["Docker"],
         "languages": ["English"],
@@ -52,8 +51,17 @@ def test_profile_can_be_updated(client: TestClient) -> None:
     response = client.put("/api/users/2/profile", json=payload)
 
     assert response.status_code == 200
-    assert response.json()["target_roles"] == ["AI Engineer"]
+    assert "target_roles" not in response.json()
     assert response.json()["minimum_salary"] == 20000
+
+
+def test_search_query_uses_criteria_without_target_role(client: TestClient) -> None:
+    profile = db.get_profile(2)
+
+    assert profile is not None
+    assert services.build_search_query(profile) == (
+        '"Python" Poland remote hybrid B2B employment hiring'
+    )
 
 
 def test_free_search_is_limited_and_ranked(

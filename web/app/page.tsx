@@ -24,7 +24,6 @@ type User = {
 
 type Profile = {
   user_id: number;
-  target_roles: string[];
   core_skills: string[];
   other_skills: string[];
   languages: string[];
@@ -55,7 +54,6 @@ type Usage = {
 
 const emptyProfile: Profile = {
   user_id: 0,
-  target_roles: [],
   core_skills: [],
   other_skills: [],
   languages: [],
@@ -166,16 +164,14 @@ export default function Dashboard() {
     {
       name: "updateSearchCriteria",
       description:
-        "Update the visible target roles, core skills, and location in the candidate profile. The user still saves the changes explicitly.",
+        "Update the visible core skills and location in the candidate profile. The user still saves the changes explicitly.",
       parameters: z.object({
-        targetRoles: z.array(z.string()).optional(),
         coreSkills: z.array(z.string()).optional(),
         location: z.string().optional(),
       }),
-      handler: async ({ targetRoles, coreSkills, location }) => {
+      handler: async ({ coreSkills, location }) => {
         setProfile((current) => ({
           ...current,
-          target_roles: targetRoles ?? current.target_roles,
           core_skills: coreSkills ?? current.core_skills,
           location: location ?? current.location,
         }));
@@ -352,16 +348,6 @@ export default function Dashboard() {
           </div>
 
           <div className="formGrid">
-            <label className="wide">
-              <span>Target roles</span>
-              <input
-                value={profile.target_roles.join(", ")}
-                onChange={(event) =>
-                  updateField("target_roles", splitList(event.target.value))
-                }
-                placeholder="Python Developer, AI Engineer"
-              />
-            </label>
             <label className="wide">
               <span>Core skills</span>
               <input

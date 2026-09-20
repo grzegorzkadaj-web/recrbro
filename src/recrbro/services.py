@@ -38,7 +38,6 @@ TRACKING_QUERY_KEYS = {"trk", "trackingId", "refId", "currentJobId"}
 
 
 class ExtractedCvProfile(BaseModel):
-    target_roles: list[str] = Field(default_factory=list)
     core_skills: list[str] = Field(default_factory=list)
     other_skills: list[str] = Field(default_factory=list)
     languages: list[str] = Field(default_factory=list)
@@ -87,17 +86,7 @@ def _fallback_cv_profile(text: str) -> ExtractedCvProfile:
         for language in ["English", "Polish", "German", "French", "Spanish"]
         if language.casefold() in text.casefold()
     ]
-    role_matches = re.findall(
-        r"(?im)^.{0,45}(developer|engineer|architect|manager|consultant).{0,35}$",
-        text,
-    )
-    target_roles = (
-        [f"{role.title()} role" for role in _unique(role_matches)[:3]]
-        if role_matches
-        else ["Software Engineer"]
-    )
     return ExtractedCvProfile(
-        target_roles=target_roles,
         core_skills=skills[:8],
         other_skills=skills[8:],
         languages=languages,
@@ -117,8 +106,8 @@ async def analyze_cv(
             ExtractedCvProfile, include_raw=True
         )
         response = await structured_model.ainvoke(
-            "Extract the candidate's likely target roles, strongest core technical "
-            "skills, other relevant skills, and spoken languages from this CV. "
+            "Extract the candidate's strongest core technical skills, other relevant "
+            "skills, and spoken languages from this CV. "
             "Return concise deduplicated lists. Do not infer unsupported facts.\n\n"
             f"CV:\n{text[:50000]}"
         )
@@ -145,7 +134,6 @@ async def analyze_cv(
 
     profile = Profile(
         user_id=user_id,
-        target_roles=_unique(extracted.target_roles) or current.target_roles,
         core_skills=_unique(extracted.core_skills) or current.core_skills,
         other_skills=_unique(extracted.other_skills),
         languages=_unique(extracted.languages) or current.languages,
@@ -159,10 +147,8 @@ async def analyze_cv(
     return CvAnalysis(profile=profile, analysis_mode=mode, warning=warning)
 
 
-def build_search_query(profile: Profile, role: str | None = None) -> str:
-    selected_role = role or (profile.target_roles[0] if profile.target_roles else "job")
+def build_search_query(profile: Profile) -> str:
     parts = [
-        f'"{selected_role}"',
         " ".join(f'"{skill}"' for skill in profile.core_skills[:5]),
         profile.location,
         " ".join(profile.work_modes),
@@ -360,27 +346,22 @@ def search_linkedin(
         )
 
     client = TavilyClient(api_key=TAVILY_API_KEY)
-    roles = profile.target_roles[:5] or ["job"]
-    queries = [build_search_query(profile, role) for role in roles]
+    query = build_search_query(profile)
     results_by_url: dict[str, dict] = {}
     candidate_limit = min(max(limit * 3, 20), 100)
 
-    for query in queries:
-        remaining = candidate_limit - len(results_by_url)
-        if remaining <= 0:
-            break
-        response = client.search(
-            query=query,
-            search_depth="advanced",
-            max_results=min(20, max(remaining, 5)),
-            include_domains=["linkedin.com"],
-            topic="general",
-            include_raw_content="text",
-        )
-        for result in response.get("results", []):
-            url = result.get("url", "")
-            if _is_linkedin_jobs_url(url) and url not in results_by_url:
-                results_by_url[url] = result
+    response = client.search(
+        query=query,
+        search_depth="advanced",
+        max_results=min(20, candidate_limit),
+        include_domains=["linkedin.com"],
+        topic="general",
+        include_raw_content="text",
+    )
+    for result in response.get("results", []):
+        url = result.get("url", "")
+        if _is_linkedin_jobs_url(url) and url not in results_by_url:
+            results_by_url[url] = result
 
     job_results, collection_results, invalid_link_count = _verify_linkedin_urls(
         results_by_url
@@ -448,7 +429,7 @@ def search_linkedin(
             f"Tavily returned {len(offers)} unique LinkedIn job pages for this query; "
             f"the plan allows up to {limit}.{filter_note}"
         )
-    return queries[0], offers, warning
+    return query, offers, warning
 
 
 def profile_update_from_profile(profile: Profile) -> ProfileUpdate:

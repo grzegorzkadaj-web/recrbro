@@ -7,13 +7,26 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from recrbro.agent import add_agent_endpoint
 from recrbro.config import FRONTEND_ORIGIN
-from recrbro.db import (complete_search, create_search, get_profile, get_user,
-                        initialize_database, list_users, update_profile,
-                        usage_summary)
-from recrbro.models import (CvAnalysis, Profile, ProfileUpdate, SearchRequest,
-                            SearchResponse, UsageSummary, User)
-from recrbro.services import (analyze_cv, profile_update_from_profile,
-                              search_linkedin)
+from recrbro.db import (
+    complete_search,
+    create_search,
+    get_profile,
+    get_user,
+    initialize_database,
+    list_users,
+    update_profile,
+    usage_summary,
+)
+from recrbro.models import (
+    CvAnalysis,
+    Profile,
+    ProfileUpdate,
+    SearchRequest,
+    SearchResponse,
+    UsageSummary,
+    User,
+)
+from recrbro.services import analyze_cv, profile_update_from_profile, search_linkedin
 
 
 @asynccontextmanager
@@ -103,10 +116,10 @@ def search(user_id: int, payload: SearchRequest) -> SearchResponse:
     user = _require_user(user_id)
     profile = _require_profile(user_id)
     limit = min(payload.max_results, user.result_limit)
-    if not profile.target_roles and not profile.core_skills:
+    if not profile.core_skills:
         raise HTTPException(
             status_code=422,
-            detail="Add at least one target role or core skill before searching.",
+            detail="Add at least one core skill before searching.",
         )
     try:
         query, offers, warning = search_linkedin(

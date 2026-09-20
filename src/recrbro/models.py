@@ -19,7 +19,6 @@ class User(BaseModel):
 
 class Profile(BaseModel):
     user_id: int
-    target_roles: list[str] = Field(default_factory=list)
     core_skills: list[str] = Field(default_factory=list)
     other_skills: list[str] = Field(default_factory=list)
     languages: list[str] = Field(default_factory=list)
@@ -32,7 +31,6 @@ class Profile(BaseModel):
 
 
 class ProfileUpdate(BaseModel):
-    target_roles: list[str] = Field(default_factory=list)
     core_skills: list[str] = Field(default_factory=list)
     other_skills: list[str] = Field(default_factory=list)
     languages: list[str] = Field(default_factory=list)
