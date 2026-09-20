@@ -62,7 +62,10 @@ def test_free_search_is_limited_and_ranked(
     monkeypatch.setattr(
         services,
         "_resolve_job_url",
-        lambda url: services._canonical_linkedin_job_url(url),
+        lambda url: (
+            services._canonical_linkedin_job_url(url),
+            "Apply now for this open role.",
+        ),
     )
 
     class FakeTavilyClient:
@@ -105,7 +108,10 @@ def test_search_extracts_page_content_before_active_filtering(
     monkeypatch.setattr(
         services,
         "_resolve_job_url",
-        lambda url: services._canonical_linkedin_job_url(url),
+        lambda url: (
+            services._canonical_linkedin_job_url(url),
+            "Apply now for this open role.",
+        ),
     )
 
     class FakeTavilyClient:
@@ -178,6 +184,9 @@ def test_resolved_collection_page_is_not_a_job_detail(
                 "?trk=expired_jd_redirect"
             )
 
+        def read(self, _: int) -> bytes:
+            return b""
+
     monkeypatch.setattr(services, "urlopen", lambda *_args, **_kwargs: FakeResponse())
 
     assert services._resolve_job_url(reported_url) is None
@@ -196,8 +205,50 @@ def test_resolved_job_url_is_canonicalized(monkeypatch: pytest.MonkeyPatch) -> N
                 "https://pl.linkedin.com/jobs/view/python-developer-4457269750?trk=jobs"
             )
 
+        def read(self, _: int) -> bytes:
+            return b"Apply now for this Python role."
+
     monkeypatch.setattr(services, "urlopen", lambda *_args, **_kwargs: FakeResponse())
 
     assert services._resolve_job_url("https://linkedin.com/jobs/view/4457269750") == (
-        "https://www.linkedin.com/jobs/view/4457269750"
+        "https://www.linkedin.com/jobs/view/4457269750",
+        "Apply now for this Python role.",
+    )
+
+
+def test_detail_page_with_closed_banner_is_inactive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def geturl(self) -> str:
+            return "https://www.linkedin.com/jobs/view/3834648737/"
+
+        def read(self, _: int) -> bytes:
+            return (
+                b'<figure class="closed-job">'
+                b'<figcaption class="closed-job__flavor--closed">'
+                b"No longer accepting applications</figcaption></figure>"
+            )
+
+    monkeypatch.setattr(services, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    resolved = services._resolve_job_url(
+        "https://www.linkedin.com/jobs/view/3834648737/"
+    )
+
+    assert resolved is not None
+    url, page_content = resolved
+    assert url == "https://www.linkedin.com/jobs/view/3834648737"
+    assert not services._is_active_offer(
+        {
+            "url": url,
+            "raw_content": "Tavily snippet without an inactive marker.",
+            "linkedin_page_content": page_content,
+        }
     )

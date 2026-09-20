@@ -69,6 +69,10 @@ strict TypeScript no-emit check rather than ESLint.
   a numeric `/jobs/view/{id}` page; reject redirects to `/jobs/*-jobs` listing
   pages, including URLs marked with `expired_jd_redirect`, and persist the
   canonical `https://www.linkedin.com/jobs/view/{id}` URL.
+- Treat the directly fetched LinkedIn page as authoritative for active status,
+  because Tavily snippets can omit LinkedIn's `closed-job` banner. Reject a
+  result when the direct HTML contains a closed/expired marker even if Tavily's
+  extracted content looks active.
 - Use current CopilotKit v2 APIs from `@copilotkit/react-core/v2`; do not replace
   `useAgentContext`/`useFrontendTool` with deprecated v1 hooks.
 

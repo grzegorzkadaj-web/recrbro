@@ -10,9 +10,9 @@ assistant for refining the visible search profile.
 - **FastAPI** provides user, profile, CV, usage, and job-search APIs.
 - **SQLite** stores the two demo users, profiles, searches, offers, and AI usage.
 - **Tavily** discovers current LinkedIn job pages and retrieves their page
-  content. Search results are filtered to LinkedIn job URLs, rejected when the
-  page says applications are closed or the offer is unavailable, and rejected
-  when LinkedIn redirects to a job-list page. Valid links are stored as clean
+  content. Each candidate is also fetched directly from LinkedIn and rejected
+  when the current page says applications are closed or when LinkedIn redirects
+  to a job-list page. Valid links are stored as clean
   `linkedin.com/jobs/view/{job-id}` detail URLs before deduplication, excluded
   company filtering, and local ranking.
 - **LangGraph + CopilotKit** provide the embedded search assistant.

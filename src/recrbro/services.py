@@ -30,6 +30,7 @@ CLOSED_OFFER_MARKERS = (
     "vacancy has been filled",
     "job has expired",
     "job posting has expired",
+    "closed-job__flavor--closed",
 )
 LINKEDIN_JOB_PATH = re.compile(r"^/jobs/view/(?:.+-)?(?P<job_id>\d+)/?$")
 
@@ -178,7 +179,8 @@ def _company_from_title(title: str) -> str:
 
 def _offer_page_text(result: dict) -> str:
     return " ".join(
-        str(result.get(field) or "") for field in ("title", "content", "raw_content")
+        str(result.get(field) or "")
+        for field in ("title", "content", "raw_content", "linkedin_page_content")
     ).strip()
 
 
@@ -195,15 +197,19 @@ def _canonical_linkedin_job_url(url: str) -> str | None:
     return f"https://www.linkedin.com/jobs/view/{match.group('job_id')}"
 
 
-def _resolve_job_url(url: str) -> str | None:
+def _resolve_job_url(url: str) -> tuple[str, str] | None:
     request = Request(
         url,
-        method="HEAD",
+        method="GET",
         headers={"User-Agent": "Mozilla/5.0 (compatible; Recrbro/0.1)"},
     )
     try:
         with urlopen(request, timeout=15) as response:
-            return _canonical_linkedin_job_url(response.geturl())
+            canonical_url = _canonical_linkedin_job_url(response.geturl())
+            if canonical_url is None:
+                return None
+            page_content = response.read(2_000_000).decode("utf-8", errors="ignore")
+            return canonical_url, page_content
     except (HTTPError, URLError, TimeoutError, ValueError):
         return None
 
@@ -219,17 +225,21 @@ def _verify_job_detail_urls(
         resolved_urls = list(executor.map(_resolve_job_url, urls))
 
     verified: dict[str, dict] = {}
-    for original_url, resolved_url in zip(urls, resolved_urls, strict=True):
-        if resolved_url is None or resolved_url in verified:
+    for original_url, resolved in zip(urls, resolved_urls, strict=True):
+        if resolved is None:
+            continue
+        resolved_url, page_content = resolved
+        if resolved_url in verified:
             continue
         result = results_by_url[original_url]
         result["url"] = resolved_url
+        result["linkedin_page_content"] = page_content
         verified[resolved_url] = result
     return verified, len(results_by_url) - len(verified)
 
 
 def _is_active_offer(result: dict) -> bool:
-    if not result.get("raw_content"):
+    if not result.get("linkedin_page_content"):
         return False
     page_text = _offer_page_text(result).casefold()
     return not any(marker in page_text for marker in CLOSED_OFFER_MARKERS)
