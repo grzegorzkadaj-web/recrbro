@@ -12,7 +12,6 @@ COPY src ./src
 RUN uv sync --locked --no-dev
 
 RUN mkdir -p /data
-VOLUME ["/data"]
 EXPOSE 8000
 
 CMD ["uv", "run", "--no-sync", "recrbro"]
