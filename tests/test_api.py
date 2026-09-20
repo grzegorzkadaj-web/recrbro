@@ -59,6 +59,12 @@ def test_profile_can_be_updated(client: TestClient) -> None:
 def test_free_search_is_limited_and_ranked(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        services,
+        "_resolve_job_url",
+        lambda url: services._canonical_linkedin_job_url(url),
+    )
+
     class FakeTavilyClient:
         def __init__(self, api_key: str):
             assert api_key == "test-key"
@@ -96,6 +102,12 @@ def test_free_search_is_limited_and_ranked(
 def test_search_extracts_page_content_before_active_filtering(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        services,
+        "_resolve_job_url",
+        lambda url: services._canonical_linkedin_job_url(url),
+    )
+
     class FakeTavilyClient:
         def __init__(self, api_key: str):
             assert api_key == "test-key"
@@ -105,12 +117,12 @@ def test_search_extracts_page_content_before_active_filtering(
                 "results": [
                     {
                         "title": "Python Developer - Closed Company",
-                        "url": "https://www.linkedin.com/jobs/view/closed",
+                        "url": "https://www.linkedin.com/jobs/view/1001",
                         "content": "Python role in Poland.",
                     },
                     {
                         "title": "Python Developer - Active Company",
-                        "url": "https://www.linkedin.com/jobs/view/active",
+                        "url": "https://www.linkedin.com/jobs/view/1002",
                         "content": "Python role in Poland.",
                     },
                 ]
@@ -120,11 +132,11 @@ def test_search_extracts_page_content_before_active_filtering(
             return {
                 "results": [
                     {
-                        "url": "https://www.linkedin.com/jobs/view/closed",
+                        "url": "https://www.linkedin.com/jobs/view/1001",
                         "raw_content": "No longer accepting applications",
                     },
                     {
-                        "url": "https://www.linkedin.com/jobs/view/active",
+                        "url": "https://www.linkedin.com/jobs/view/1002",
                         "raw_content": "Apply now for this Python role.",
                     },
                 ]
@@ -138,4 +150,54 @@ def test_search_extracts_page_content_before_active_filtering(
     assert response.status_code == 200
     offers = response.json()["offers"]
     assert [offer["company"] for offer in offers] == ["Active Company"]
-    assert "closed or unverifiable offers were removed" in response.json()["warning"]
+    assert (
+        "non-detail, closed, or unverifiable offers were removed"
+        in response.json()["warning"]
+    )
+
+
+def test_resolved_collection_page_is_not_a_job_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reported_url = (
+        "https://www.linkedin.com/jobs/view/"
+        "gymdesk-mid-level-php-developer-for-b2b-saas-at-"
+        "online-jobs-philippines-work-at-home-4457269750"
+    )
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def geturl(self) -> str:
+            return (
+                "https://www.linkedin.com/jobs/senior-php-developer-jobs"
+                "?trk=expired_jd_redirect"
+            )
+
+    monkeypatch.setattr(services, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    assert services._resolve_job_url(reported_url) is None
+
+
+def test_resolved_job_url_is_canonicalized(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def geturl(self) -> str:
+            return (
+                "https://pl.linkedin.com/jobs/view/python-developer-4457269750?trk=jobs"
+            )
+
+    monkeypatch.setattr(services, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    assert services._resolve_job_url("https://linkedin.com/jobs/view/4457269750") == (
+        "https://www.linkedin.com/jobs/view/4457269750"
+    )

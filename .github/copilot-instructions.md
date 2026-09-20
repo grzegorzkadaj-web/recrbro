@@ -65,6 +65,10 @@ strict TypeScript no-emit check rather than ESLint.
 - Search candidates must be checked against Tavily's extracted page content
   before persistence. Reject closed/expired markers such as "No longer
   accepting applications"; do not rely only on search-result snippets.
+- Resolve LinkedIn links before presenting them. The final location must remain
+  a numeric `/jobs/view/{id}` page; reject redirects to `/jobs/*-jobs` listing
+  pages, including URLs marked with `expired_jd_redirect`, and persist the
+  canonical `https://www.linkedin.com/jobs/view/{id}` URL.
 - Use current CopilotKit v2 APIs from `@copilotkit/react-core/v2`; do not replace
   `useAgentContext`/`useFrontendTool` with deprecated v1 hooks.
 

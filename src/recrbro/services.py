@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
 
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
@@ -27,6 +31,7 @@ CLOSED_OFFER_MARKERS = (
     "job has expired",
     "job posting has expired",
 )
+LINKEDIN_JOB_PATH = re.compile(r"^/jobs/view/(?:.+-)?(?P<job_id>\d+)/?$")
 
 
 class ExtractedCvProfile(BaseModel):
@@ -177,6 +182,52 @@ def _offer_page_text(result: dict) -> str:
     ).strip()
 
 
+def _canonical_linkedin_job_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").casefold()
+    match = LINKEDIN_JOB_PATH.fullmatch(parsed.path)
+    if (
+        not (hostname == "linkedin.com" or hostname.endswith(".linkedin.com"))
+        or match is None
+        or "expired_jd_redirect" in parse_qs(parsed.query)
+    ):
+        return None
+    return f"https://www.linkedin.com/jobs/view/{match.group('job_id')}"
+
+
+def _resolve_job_url(url: str) -> str | None:
+    request = Request(
+        url,
+        method="HEAD",
+        headers={"User-Agent": "Mozilla/5.0 (compatible; Recrbro/0.1)"},
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            return _canonical_linkedin_job_url(response.geturl())
+    except (HTTPError, URLError, TimeoutError, ValueError):
+        return None
+
+
+def _verify_job_detail_urls(
+    results_by_url: dict[str, dict],
+) -> tuple[dict[str, dict], int]:
+    if not results_by_url:
+        return {}, 0
+
+    urls = list(results_by_url)
+    with ThreadPoolExecutor(max_workers=min(8, len(urls))) as executor:
+        resolved_urls = list(executor.map(_resolve_job_url, urls))
+
+    verified: dict[str, dict] = {}
+    for original_url, resolved_url in zip(urls, resolved_urls, strict=True):
+        if resolved_url is None or resolved_url in verified:
+            continue
+        result = results_by_url[original_url]
+        result["url"] = resolved_url
+        verified[resolved_url] = result
+    return verified, len(results_by_url) - len(verified)
+
+
 def _is_active_offer(result: dict) -> bool:
     if not result.get("raw_content"):
         return False
@@ -268,17 +319,18 @@ def search_linkedin(
         )
         for result in response.get("results", []):
             url = result.get("url", "")
-            if "linkedin.com/jobs/" in url and url not in results_by_url:
+            if _canonical_linkedin_job_url(url) and url not in results_by_url:
                 results_by_url[url] = result
 
+    results_by_url, invalid_link_count = _verify_job_detail_urls(results_by_url)
     _populate_missing_page_content(client, results_by_url)
 
     excluded = {company.casefold() for company in profile.excluded_companies}
     offers: list[JobOffer] = []
-    closed_count = 0
+    filtered_count = invalid_link_count
     for result in results_by_url.values():
         if not _is_active_offer(result):
-            closed_count += 1
+            filtered_count += 1
             continue
         title = result.get("title") or "LinkedIn job offer"
         company = _company_from_title(title)
@@ -302,8 +354,8 @@ def search_linkedin(
     warning = None
     if len(offers) < limit:
         filter_note = (
-            f" {closed_count} closed or unverifiable offers were removed."
-            if closed_count
+            f" {filtered_count} non-detail, closed, or unverifiable offers were removed."
+            if filtered_count
             else ""
         )
         warning = (
