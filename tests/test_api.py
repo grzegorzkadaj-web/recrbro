@@ -81,6 +81,13 @@ def test_search_query_uses_criteria_without_target_role(client: TestClient) -> N
     assert services.build_search_query(profile) == (
         '"Python" Poland remote hybrid B2B employment hiring'
     )
+    assert services.build_search_queries(profile, 100) == [
+        '"Python" jobs Poland remote hybrid B2B employment LinkedIn',
+        '"Python" developer jobs Poland remote hybrid B2B employment LinkedIn',
+        '"Python" engineer jobs Poland remote hybrid B2B employment LinkedIn',
+        '"Python" specialist jobs Poland remote hybrid B2B employment LinkedIn',
+        '"Python" Poland remote hybrid B2B employment LinkedIn hiring',
+    ]
 
 
 def test_free_search_is_limited_and_ranked(
@@ -190,9 +197,10 @@ def test_search_extracts_page_content_before_active_filtering(
     offers = response.json()["offers"]
     assert [offer["company"] for offer in offers] == ["Active Company"]
     assert (
-        "non-detail, inactive, location-mismatched, or unverifiable offers were removed"
-        in response.json()["warning"]
+        "non-detail, inactive, location-mismatched, excluded-company, or "
+        "unverifiable offers were removed" in response.json()["warning"]
     )
+    assert "Diagnostics:" in response.json()["warning"]
 
 
 def test_resolved_collection_page_is_not_a_job_detail(
@@ -428,6 +436,113 @@ def test_search_excludes_ai_rejected_offers(
     assert response.status_code == 200
     assert response.json()["offers"] == []
     assert "2 non-detail, inactive, location-mismatched" in response.json()["warning"]
+    assert "1 inactive, 1 location mismatches" in response.json()["warning"]
+
+
+def test_search_uses_tavily_content_when_direct_fetch_is_blocked(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    accept_job_analysis: None,
+) -> None:
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            assert api_key == "test-key"
+
+        def search(self, **_: object) -> dict:
+            return {
+                "results": [
+                    {
+                        "title": "Python Developer - Active Company",
+                        "url": "https://www.linkedin.com/jobs/view/4001",
+                        "content": "Python role in Poland.",
+                        "raw_content": "Apply now for this active Python role in Poland.",
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
+    monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
+    monkeypatch.setattr(services, "_resolve_linkedin_page", lambda _url: None)
+
+    response = client.post("/api/users/2/search", json={"max_results": 3})
+
+    assert response.status_code == 200
+    assert len(response.json()["offers"]) == 1
+    assert any(
+        reason.startswith("Status verified from Tavily content")
+        for reason in response.json()["offers"][0]["match_reasons"]
+    )
+    assert "1 Tavily-content fallbacks" in response.json()["warning"]
+
+
+def test_search_merges_results_from_focused_queries(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    accept_job_analysis: None,
+) -> None:
+    search_calls: list[dict[str, object]] = []
+
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            assert api_key == "test-key"
+
+        def search(self, **kwargs: object) -> dict:
+            search_calls.append(kwargs)
+            index = len(search_calls)
+            return {
+                "results": [
+                    {
+                        "title": f"Python Developer - Company {index}",
+                        "url": f"https://www.linkedin.com/jobs/view/50{index}",
+                        "content": "Python role in Poland.",
+                        "raw_content": "Apply now for this active Python role.",
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
+    monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
+    monkeypatch.setattr(
+        services,
+        "_resolve_linkedin_page",
+        lambda url: (
+            "job",
+            services._canonical_linkedin_job_url(url),
+            "Apply now for this active Python role.",
+        ),
+    )
+
+    response = client.post("/api/users/2/search", json={"max_results": 5})
+
+    assert response.status_code == 200
+    assert len(search_calls) == 2
+    assert len(response.json()["offers"]) == 2
+    assert all(
+        call["max_results"] == 10
+        and call["search_depth"] == "advanced"
+        and call["include_domains"] == ["linkedin.com"]
+        and call["include_domains_mode"] == "restrict"
+        for call in search_calls
+    )
+
+
+def test_tavily_errors_return_service_unavailable(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            assert api_key == "test-key"
+
+        def search(self, **_: object) -> dict:
+            raise services.BadRequestError("Invalid Tavily request.")
+
+    monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
+    monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
+
+    response = client.post("/api/users/2/search", json={"max_results": 5})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Tavily search failed: Invalid Tavily request."
 
 
 def test_empty_location_accepts_any_ai_location_result(
@@ -478,7 +593,7 @@ def test_empty_location_accepts_any_ai_location_result(
     assert assessments["https://www.linkedin.com/jobs/view/1"].location_matches
 
 
-def test_collections_fill_only_missing_slots_when_requested(
+def test_collection_pages_are_crawled_when_no_verified_jobs(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
     accept_job_analysis: None,
@@ -500,33 +615,48 @@ def test_collections_fill_only_missing_slots_when_requested(
                         "title": "Python Developer jobs",
                         "url": "https://www.linkedin.com/jobs/python-developer-jobs",
                         "content": "Browse Python developer jobs.",
+                        "raw_content": (
+                            '<a href="/jobs/view/python-developer-4441830533'
+                            '?trackingId=abc">Python Developer - Fallback Company</a>'
+                        ),
                     },
                 ]
             }
 
+        def extract(self, **kwargs: object) -> dict:
+            assert kwargs["urls"] == ["https://www.linkedin.com/jobs/view/4441830533"]
+            return {
+                "results": [
+                    {
+                        "url": "https://www.linkedin.com/jobs/view/4441830533",
+                        "raw_content": "Apply now for this Python role in Poland.",
+                    }
+                ]
+            }
+
     def resolve(url: str):
-        if "/view/" in url:
+        if url.endswith("/2001"):
             return (
                 "job",
                 "https://www.linkedin.com/jobs/view/2001",
-                "Apply now for this Python role.",
+                "No longer accepting applications.",
             )
-        return (
-            "collection",
-            "https://www.linkedin.com/jobs/python-developer-jobs",
-            "Browse matching jobs.",
-        )
+        if "/view/" in url:
+            return (
+                "job",
+                "https://www.linkedin.com/jobs/view/4441830533",
+                "Apply now for this Python role in Poland.",
+            )
+        return None
 
     monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
     monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
     monkeypatch.setattr(services, "_resolve_linkedin_page", resolve)
 
-    response = client.post(
-        "/api/users/2/search",
-        json={"max_results": 3, "include_collections_if_needed": True},
-    )
+    response = client.post("/api/users/2/search", json={"max_results": 3})
 
     assert response.status_code == 200
     offers = response.json()["offers"]
-    assert [offer["result_type"] for offer in offers] == ["job", "collection"]
-    assert offers[-1]["score"] == 0
+    assert [offer["result_type"] for offer in offers] == ["job"]
+    assert offers[0]["url"] == "https://www.linkedin.com/jobs/view/4441830533"
+    assert offers[0]["company"] == "Fallback Company"

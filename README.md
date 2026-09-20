@@ -9,10 +9,13 @@ assistant for refining the visible search profile.
 
 - **FastAPI** provides user, profile, CV, usage, and job-search APIs.
 - **SQLite** stores the two demo users, profiles, searches, offers, and AI usage.
-- **Tavily** discovers current LinkedIn job pages and retrieves their page
-  content. Each candidate is also fetched directly from LinkedIn and rejected
-  when the current page says applications are closed or when LinkedIn redirects
-  to a job-list page. Valid links are stored as clean
+- **Tavily** runs several focused searches for skill and role variants, merges
+  and deduplicates the results, and retrieves current LinkedIn job-page content.
+  Each candidate is also fetched directly from LinkedIn and rejected when the
+  current page says applications are closed or when LinkedIn redirects to a
+  job-list page. When LinkedIn blocks a direct request, a canonical detail URL
+  may use Tavily-extracted content as an explicitly labelled fallback. Valid
+  links are stored as clean
   `linkedin.com/jobs/view/{job-id}` detail URLs before deduplication, excluded
   company filtering, and local ranking.
 - **LangGraph + CopilotKit** provide the embedded search assistant.
@@ -74,10 +77,14 @@ The database seeds two selectable users:
 - `Free demo`: five results per search; CV analysis disabled.
 - `Premium demo`: up to 100 requested results; CV analysis enabled.
 
-The search form can optionally include LinkedIn collection/search pages when
-there are not enough verified individual offers. Individual job links are
-always listed first; collection entries are appended, labelled **Collection**,
-and do not display a match percentage.
+When there are not enough verified individual offers, the search automatically
+opens matching LinkedIn collection/search pages, extracts their individual job
+links, and runs those jobs through the same activity, location, and ranking
+checks. Collection pages themselves are not presented as offers.
+
+When fewer offers are found than requested, the response warning includes
+discovery diagnostics such as query count, duplicates, unresolved links,
+inactive offers, location mismatches, and Tavily-content fallbacks.
 
 For the PoC, both plans run searches immediately. Scheduled Free-plan execution,
 email delivery, authentication, and payments remain outside the prototype.

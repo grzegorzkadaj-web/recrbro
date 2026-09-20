@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -8,13 +9,29 @@ from html.parser import HTMLParser
 from io import BytesIO
 from typing import Literal
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import (
+    parse_qs,
+    parse_qsl,
+    unquote,
+    urlencode,
+    urljoin,
+    urlparse,
+    urlunparse,
+)
 from urllib.request import Request, urlopen
 
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 from tavily import TavilyClient
+from tavily.errors import (
+    BadRequestError,
+    ForbiddenError,
+    InvalidAPIKeyError,
+    MissingAPIKeyError,
+)
+from tavily.errors import TimeoutError as TavilyTimeoutError
+from tavily.errors import UsageLimitExceededError
 
 from recrbro.config import (
     OPENAI_API_KEY,
@@ -43,6 +60,14 @@ CLOSED_OFFER_MARKERS = (
 )
 LINKEDIN_JOB_PATH = re.compile(r"^/jobs/view/(?:.+-)?(?P<job_id>\d+)/?$")
 TRACKING_QUERY_KEYS = {"trk", "trackingId", "refId", "currentJobId"}
+TAVILY_ERRORS = (
+    BadRequestError,
+    ForbiddenError,
+    InvalidAPIKeyError,
+    MissingAPIKeyError,
+    TavilyTimeoutError,
+    UsageLimitExceededError,
+)
 
 
 class ExtractedCvProfile(BaseModel):
@@ -79,6 +104,34 @@ class _VisibleTextParser(HTMLParser):
     def handle_data(self, data: str) -> None:
         if not self.ignored_depth:
             self.parts.append(data)
+
+
+class _JobLinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.links: list[tuple[str, str]] = []
+        self.current_href: str | None = None
+        self.current_text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "a" or self.current_href is not None:
+            return
+        href = dict(attrs).get("href")
+        if href:
+            self.current_href = href
+            self.current_text = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self.current_href is not None:
+            self.links.append(
+                (self.current_href, " ".join(" ".join(self.current_text).split()))
+            )
+            self.current_href = None
+            self.current_text = []
+
+    def handle_data(self, data: str) -> None:
+        if self.current_href is not None:
+            self.current_text.append(data)
 
 
 def _unique(values: Iterable[str]) -> list[str]:
@@ -196,6 +249,45 @@ def build_search_query(profile: Profile) -> str:
     return " ".join(part for part in parts if part).strip()
 
 
+def build_search_queries(profile: Profile, limit: int) -> list[str]:
+    filters = " ".join(
+        part
+        for part in (
+            profile.location.strip(),
+            " ".join(profile.work_modes),
+            " ".join(profile.contract_types),
+        )
+        if part
+    )
+    role_templates = ("jobs", "developer jobs", "engineer jobs", "specialist jobs")
+    queries = [
+        " ".join(
+            part
+            for part in (
+                f'"{skill}" {role_template}',
+                filters,
+                "LinkedIn",
+            )
+            if part
+        )
+        for role_template in role_templates
+        for skill in profile.core_skills[:5]
+    ]
+    queries.append(
+        " ".join(
+            part
+            for part in (
+                " ".join(f'"{skill}"' for skill in profile.core_skills[:3]),
+                filters,
+                "LinkedIn hiring",
+            )
+            if part
+        )
+    )
+    query_limit = min(5, max(2, math.ceil(min(max(limit * 3, 20), 100) / 20)))
+    return _unique(queries)[:query_limit]
+
+
 def _company_from_title(title: str) -> str:
     for separator in (" | ", " - ", " at "):
         if separator in title:
@@ -255,6 +347,66 @@ def _is_linkedin_jobs_url(url: str) -> bool:
     ) and parsed.path.startswith("/jobs/")
 
 
+def _job_title_from_url(url: str) -> str:
+    slug = unquote(urlparse(url).path.rstrip("/").rsplit("/", 1)[-1])
+    slug = re.sub(r"-?\d+$", "", slug).strip("-")
+    return slug.replace("-", " ").strip().title() or "LinkedIn job offer"
+
+
+def _extract_collection_jobs(
+    collection_results: dict[str, dict],
+    existing_urls: set[str],
+    limit: int,
+) -> dict[str, dict]:
+    jobs: dict[str, dict] = {}
+
+    def add_job(candidate_url: str, title: str = "") -> None:
+        absolute_url = urljoin(collection_url, candidate_url)
+        canonical_url = _canonical_linkedin_job_url(absolute_url)
+        if (
+            canonical_url is None
+            or canonical_url in existing_urls
+            or canonical_url in jobs
+            or len(jobs) >= limit
+        ):
+            return
+        jobs[canonical_url] = {
+            "url": canonical_url,
+            "title": title.strip() or _job_title_from_url(absolute_url),
+            "content": "",
+        }
+
+    for collection_url, result in collection_results.items():
+        page_content = str(
+            result.get("linkedin_page_content")
+            or result.get("raw_content")
+            or result.get("content")
+            or ""
+        )
+        normalized_content = page_content.replace("\\u002F", "/").replace("\\/", "/")
+        parser = _JobLinkParser()
+        parser.feed(normalized_content)
+        for candidate_url, title in parser.links:
+            add_job(candidate_url, title)
+
+        for match in re.finditer(
+            r"(?:https?://(?:[\w-]+\.)?linkedin\.com)?"
+            r"/jobs/view/(?:[\w%-]+-)?\d+/?(?:\?[^\s\"'<>\\]*)?",
+            normalized_content,
+            flags=re.IGNORECASE,
+        ):
+            add_job(match.group())
+
+        for job_id in re.findall(
+            r"urn:li:jobPosting:(\d+)", normalized_content, flags=re.IGNORECASE
+        ):
+            add_job(f"https://www.linkedin.com/jobs/view/{job_id}")
+
+        if len(jobs) >= limit:
+            break
+    return jobs
+
+
 def _resolve_linkedin_page(
     url: str,
 ) -> tuple[Literal["job", "collection"], str, str] | None:
@@ -296,6 +448,24 @@ def _verify_linkedin_urls(
     collections: dict[str, dict] = {}
     for original_url, resolved in zip(urls, resolved_pages, strict=True):
         if resolved is None:
+            canonical_job_url = _canonical_linkedin_job_url(original_url)
+            canonical_collection_url = _canonical_linkedin_collection_url(original_url)
+            if canonical_job_url is not None and canonical_job_url not in jobs:
+                result = results_by_url[original_url]
+                result["url"] = canonical_job_url
+                result["direct_verification_failed"] = True
+                jobs[canonical_job_url] = result
+            elif (
+                canonical_collection_url is not None
+                and canonical_collection_url not in collections
+                and (
+                    results_by_url[original_url].get("raw_content")
+                    or results_by_url[original_url].get("content")
+                )
+            ):
+                result = results_by_url[original_url]
+                result["url"] = canonical_collection_url
+                collections[canonical_collection_url] = result
             continue
         result_type, resolved_url, page_content = resolved
         destination = jobs if result_type == "job" else collections
@@ -310,10 +480,13 @@ def _verify_linkedin_urls(
 
 
 def _is_active_offer(result: dict) -> bool:
-    if not result.get("linkedin_page_content"):
+    direct_page = str(result.get("linkedin_page_content") or "")
+    extracted_page = str(result.get("raw_content") or "")
+    if not direct_page and not extracted_page:
         return False
-    raw_page = str(result["linkedin_page_content"]).casefold()
-    if any(marker in raw_page for marker in CLOSED_OFFER_MARKERS):
+    if direct_page and any(
+        marker in direct_page.casefold() for marker in CLOSED_OFFER_MARKERS
+    ):
         return False
     page_text = _offer_page_text(result).casefold()
     return not any(marker in page_text for marker in CLOSED_OFFER_MARKERS)
@@ -395,9 +568,11 @@ def _assess_job_results(
                 "may reside or work, not the employer headquarters. Remote does not "
                 "mean worldwide. If a requested location is present, accept only "
                 "offers that explicitly allow that location or a containing region "
-                "such as Europe, EU, EEA, or worldwide; reject another-country-only "
-                "offers and unclear eligibility. If requested location is empty, "
-                "always set location_matches=true. Keep reason concise.",
+                "such as Europe, EU, EEA, or worldwide. Reject only when the text "
+                "explicitly limits work to an incompatible location. Treat unclear "
+                "eligibility as a match so it can be ranked below explicit matches. "
+                "If requested location is empty, always set location_matches=true. "
+                "Keep reason concise.",
             ),
             (
                 "human",
@@ -499,67 +674,51 @@ def _rank_offer(
     return min(round(score, 1), 100), matched_skills, reasons
 
 
-def _collection_title(url: str) -> str:
-    slug = urlparse(url).path.rstrip("/").rsplit("/", 1)[-1]
-    if slug == "search":
-        return "More matching jobs on LinkedIn"
-    words = slug.removesuffix("-jobs").replace("-", " ").strip()
-    return f"More {words} jobs".title()
-
-
-def search_linkedin(
-    profile: Profile, limit: int, include_collections_if_needed: bool = False
-) -> tuple[str, list[JobOffer], str | None]:
-    if not TAVILY_API_KEY:
-        raise RuntimeError(
-            "TAVILY_API_KEY is not configured. Add it to .env to search live LinkedIn data."
-        )
-
-    client = TavilyClient(api_key=TAVILY_API_KEY)
-    query = build_search_query(profile)
-    results_by_url: dict[str, dict] = {}
-    candidate_limit = min(max(limit * 3, 20), 100)
-
-    response = client.search(
-        query=query,
-        search_depth="advanced",
-        max_results=min(20, candidate_limit),
-        include_domains=["linkedin.com"],
-        topic="general",
-        include_raw_content="text",
-    )
-    for result in response.get("results", []):
-        url = result.get("url", "")
-        if _is_linkedin_jobs_url(url) and url not in results_by_url:
-            results_by_url[url] = result
-
-    job_results, collection_results, invalid_link_count = _verify_linkedin_urls(
-        results_by_url
-    )
-    _populate_missing_page_content(client, job_results)
-
-    excluded = {company.casefold() for company in profile.excluded_companies}
-    offers: list[JobOffer] = []
-    filtered_count = invalid_link_count
+def _build_job_offers(
+    profile: Profile, results_by_url: dict[str, dict], excluded: set[str]
+) -> tuple[list[JobOffer], dict[str, int]]:
+    counts = {
+        "inactive": 0,
+        "ai_inactive": 0,
+        "location_mismatch": 0,
+        "excluded_company": 0,
+        "tavily_fallback": 0,
+    }
     plausible_results: dict[str, dict] = {}
-    for url, result in job_results.items():
+    for url, result in results_by_url.items():
         if not _is_active_offer(result):
-            filtered_count += 1
+            counts["inactive"] += 1
             continue
         plausible_results[url] = result
 
+    offers: list[JobOffer] = []
     assessments = _assess_job_results(profile, plausible_results)
     for url, result in plausible_results.items():
         assessment = assessments[url]
-        if not assessment.is_active or not assessment.location_matches:
-            filtered_count += 1
+        if not assessment.is_active:
+            counts["ai_inactive"] += 1
             continue
-        title = result.get("title") or "LinkedIn job offer"
+        if not assessment.location_matches:
+            counts["location_mismatch"] += 1
+            continue
+        title = result.get("title") or _job_title_from_url(url)
         company = _company_from_title(title)
         if any(name in company.casefold() for name in excluded):
+            counts["excluded_company"] += 1
             continue
-        content = result.get("raw_content") or result.get("content") or ""
+        content = (
+            result.get("raw_content")
+            or result.get("content")
+            or _offer_page_text(
+                {"linkedin_page_content": result.get("linkedin_page_content")}
+            )
+        )
         score, matched_skills, reasons = _rank_offer(title, content, profile)
+        if result.get("direct_verification_failed"):
+            counts["tavily_fallback"] += 1
+            reasons.append(
+                "Status verified from Tavily content; direct fetch unavailable"
+            )
         offers.append(
             JobOffer(
                 result_type="job",
@@ -572,42 +731,126 @@ def search_linkedin(
                 match_reasons=reasons,
             )
         )
+    return offers, counts
+
+
+def search_linkedin(
+    profile: Profile, limit: int
+) -> tuple[str, list[JobOffer], str | None]:
+    if not TAVILY_API_KEY:
+        raise RuntimeError(
+            "TAVILY_API_KEY is not configured. Add it to .env to search live LinkedIn data."
+        )
+
+    client = TavilyClient(api_key=TAVILY_API_KEY)
+    query = build_search_query(profile)
+    results_by_url: dict[str, dict] = {}
+    candidate_limit = min(max(limit * 3, 20), 100)
+    search_queries = build_search_queries(profile, limit)
+    results_per_query = min(20, math.ceil(candidate_limit / len(search_queries)))
+    discovered_count = 0
+    duplicate_count = 0
+
+    try:
+        for search_query in search_queries:
+            response = client.search(
+                query=search_query,
+                search_depth="advanced",
+                max_results=results_per_query,
+                include_domains=["linkedin.com"],
+                include_domains_mode="restrict",
+                topic="general",
+                include_raw_content="text",
+            )
+            for result in response.get("results", []):
+                discovered_count += 1
+                url = result.get("url", "")
+                if not _is_linkedin_jobs_url(url):
+                    continue
+                canonical_url = (
+                    _canonical_linkedin_job_url(url)
+                    or _canonical_linkedin_collection_url(url)
+                    or url
+                )
+                if canonical_url in results_by_url:
+                    duplicate_count += 1
+                    existing = results_by_url[canonical_url]
+                    if not existing.get("raw_content") and result.get("raw_content"):
+                        existing["raw_content"] = result["raw_content"]
+                    continue
+                result["url"] = canonical_url
+                results_by_url[canonical_url] = result
+                if len(results_by_url) >= candidate_limit:
+                    break
+            if len(results_by_url) >= candidate_limit:
+                break
+
+        job_results, collection_results, invalid_link_count = _verify_linkedin_urls(
+            results_by_url
+        )
+        _populate_missing_page_content(client, job_results)
+    except TAVILY_ERRORS as error:
+        raise RuntimeError(f"Tavily search failed: {error}") from error
+
+    excluded = {company.casefold() for company in profile.excluded_companies}
+    offers, counts = _build_job_offers(profile, job_results, excluded)
+    collection_job_count = 0
+    if len(offers) < limit and collection_results:
+        collection_candidates = _extract_collection_jobs(
+            collection_results,
+            set(job_results),
+            candidate_limit,
+        )
+        if collection_candidates:
+            try:
+                (
+                    collection_jobs,
+                    _nested_collections,
+                    collection_invalid_count,
+                ) = _verify_linkedin_urls(collection_candidates)
+                _populate_missing_page_content(client, collection_jobs)
+            except TAVILY_ERRORS as error:
+                raise RuntimeError(f"Tavily search failed: {error}") from error
+            collection_job_count = len(collection_jobs)
+            invalid_link_count += collection_invalid_count
+            fallback_offers, fallback_counts = _build_job_offers(
+                profile, collection_jobs, excluded
+            )
+            offers.extend(fallback_offers)
+            for name, count in fallback_counts.items():
+                counts[name] += count
 
     offers.sort(key=lambda offer: offer.score, reverse=True)
     offers = offers[:limit]
 
-    if include_collections_if_needed and len(offers) < limit:
-        for result in collection_results.values():
-            if len(offers) >= limit:
-                break
-            offers.append(
-                JobOffer(
-                    result_type="collection",
-                    title=_collection_title(result["url"]),
-                    company="LinkedIn job collection",
-                    url=result["url"],
-                    summary=(
-                        "A LinkedIn results page with additional related vacancies. "
-                        "Open it to review and verify individual job offers."
-                    ),
-                    score=0,
-                    match_reasons=[
-                        "Collection of offers · individual jobs are not verified"
-                    ],
-                )
-            )
-
     warning = None
     if len(offers) < limit:
+        filtered_count = (
+            invalid_link_count
+            + counts["inactive"]
+            + counts["ai_inactive"]
+            + counts["location_mismatch"]
+            + counts["excluded_company"]
+        )
         filter_note = (
             f" {filtered_count} non-detail, inactive, location-mismatched, "
-            "or unverifiable offers were removed."
+            "excluded-company, or unverifiable offers were removed."
             if filtered_count
             else ""
         )
+        diagnostics = (
+            f" Diagnostics: {len(search_queries)} queries, {discovered_count} results, "
+            f"{len(results_by_url)} unique LinkedIn URLs, {duplicate_count} duplicates, "
+            f"{invalid_link_count} unresolved, "
+            f"{counts['inactive'] + counts['ai_inactive']} "
+            f"inactive, {counts['location_mismatch']} location mismatches, "
+            f"{counts['excluded_company']} excluded companies, "
+            f"{collection_job_count} jobs extracted from collection pages, and "
+            f"{counts['tavily_fallback']} Tavily-content fallbacks."
+        )
         warning = (
             f"Tavily returned {len(offers)} unique LinkedIn job pages for this query; "
-            f"the plan allows up to {limit}.{filter_note}"
+            f"the plan allows up to {limit}.{filter_note}{diagnostics}"
         )
     return query, offers, warning
 

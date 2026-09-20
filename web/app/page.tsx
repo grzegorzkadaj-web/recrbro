@@ -92,7 +92,6 @@ export default function Dashboard() {
   });
   const [offers, setOffers] = useState<JobOffer[]>([]);
   const [maxResults, setMaxResults] = useState(10);
-  const [includeCollections, setIncludeCollections] = useState(false);
   const [status, setStatus] = useState("Loading profile...");
   const [warning, setWarning] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -147,7 +146,6 @@ export default function Dashboard() {
       user: selectedUser ?? null,
       profile,
       requestedResults: maxResults,
-      includeCollectionsIfNeeded: includeCollections,
       visibleOffers: offers.map(
         ({ title, company, score, match_reasons, result_type }) => ({
           title,
@@ -257,7 +255,6 @@ export default function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           max_results: maxResults,
-          include_collections_if_needed: includeCollections,
         }),
       });
       setOffers(result.offers);
@@ -475,17 +472,6 @@ export default function Dashboard() {
             </strong>
             <span>offers</span>
           </div>
-          <label className="collectionToggle">
-            <input
-              type="checkbox"
-              checked={includeCollections}
-              onChange={(event) => setIncludeCollections(event.target.checked)}
-            />
-            <span>
-              Include LinkedIn result pages if there are not enough verified
-              offers
-            </span>
-          </label>
           <button
             className="primaryButton"
             onClick={runSearch}

@@ -388,29 +388,6 @@ input:focus {
   color: #b8c3c2;
 }
 
-.collectionToggle {
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 10px;
-  align-items: start;
-  margin: 0 0 24px;
-  color: #cad3d2;
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.collectionToggle input {
-  width: 17px;
-  height: 17px;
-  margin: 1px 0 0;
-  accent-color: var(--mint);
-}
-
-.collectionToggle span {
-  margin: 0;
-  font-weight: 500;
-}
-
 .primaryButton {
   display: flex;
   width: 100%;
