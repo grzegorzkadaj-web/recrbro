@@ -285,11 +285,12 @@ function Dashboard({
     setStatus("Saving your profile...");
     try {
       const { user_id: _, cv_filename: __, ...payload } = profile;
-      setProfile(await api<Profile>("/api/profile", token, {
+      const savedProfile = await api<Profile>("/api/profile", token, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      }));
+      });
+      setProfile(savedProfile);
       setStatus("Profile saved");
     } catch (error) {
       setWarning(error instanceof Error ? error.message : "Could not save profile.");
@@ -330,6 +331,14 @@ function Dashboard({
     setSearchJob(null);
     setStatus("Preparing your search...");
     try {
+      const { user_id: _, cv_filename: __, ...payload } = profile;
+      const savedProfile = await api<Profile>("/api/profile", token, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      setProfile(savedProfile);
+
       const job = await api<SearchJob>("/api/searches", token, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
