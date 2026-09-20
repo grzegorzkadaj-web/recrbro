@@ -1,7 +1,6 @@
-- while preparing a search result user should be informed that something happens in background
-- design and place a logo of service brand which is "RecrBro" (this a abbroviation for Recruiting Bro - kind of agent that helps find a job offer)
+- while preparing a search result user should be informed that something happens in background, it can be a place where messages appears what's going on
+- design and place a logo of service brand which is "RecrBro" (this is an abbroviation for Recruiting Bro - kind of agent that helps find a job offer)
 - check and improve UX, it should work on both mobile and desktop
 - find a reliable hosting provider and prepare deployment instruction
 - prepare a login flow according to Requirements.md
-- there should not be information that Tavily is a search engine in public messages like: Tavily returned 1 unique LinkedIn job pages ...
-- implement all feature that are described in Requirements.md
+- implement all features that are described in Requirements.md

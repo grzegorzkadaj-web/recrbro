@@ -35,11 +35,14 @@ from tavily.errors import UsageLimitExceededError
 
 from recrbro.config import (
     OPENAI_API_KEY,
+    OPENAI_INPUT_COST_PER_MILLION,
     OPENAI_JOB_ANALYSIS_MODEL,
     OPENAI_MODEL,
+    OPENAI_OUTPUT_COST_PER_MILLION,
     TAVILY_API_KEY,
+    USD_TO_PLN,
 )
-from recrbro.db import record_usage
+from recrbro.db import record_usage, usage_summary
 from recrbro.models import CvAnalysis, JobOffer, Profile, ProfileUpdate
 
 CLOSED_OFFER_MARKERS = (
@@ -192,7 +195,11 @@ async def analyze_cv(
     mode = "local-fallback"
 
     if OPENAI_API_KEY:
-        model = ChatOpenAI(model=OPENAI_MODEL, temperature=0)
+        tracked_cost_pln = usage_summary(user_id).cost_usd * USD_TO_PLN
+        model_name = (
+            OPENAI_JOB_ANALYSIS_MODEL if tracked_cost_pln >= 25 else OPENAI_MODEL
+        )
+        model = ChatOpenAI(model=model_name, temperature=0)
         structured_model = model.with_structured_output(
             ExtractedCvProfile, include_raw=True
         )
@@ -207,13 +214,25 @@ async def analyze_cv(
         usage = getattr(raw, "usage_metadata", None) or {}
         input_tokens = int(usage.get("input_tokens", 0))
         output_tokens = int(usage.get("output_tokens", 0))
+        cost_usd = (
+            _job_analysis_cost(input_tokens, output_tokens)
+            if model_name == OPENAI_JOB_ANALYSIS_MODEL
+            else round(
+                (
+                    input_tokens * OPENAI_INPUT_COST_PER_MILLION
+                    + output_tokens * OPENAI_OUTPUT_COST_PER_MILLION
+                )
+                / 1_000_000,
+                8,
+            )
+        )
         record_usage(
             user_id=user_id,
             operation="cv_analysis",
-            model=OPENAI_MODEL,
+            model=model_name,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost_usd=0,
+            cost_usd=cost_usd,
         )
         mode = "ai"
     else:
@@ -244,6 +263,7 @@ def build_search_query(profile: Profile) -> str:
         profile.location,
         " ".join(profile.work_modes),
         " ".join(profile.contract_types),
+        f"{profile.minimum_salary} PLN" if profile.minimum_salary else "",
         "hiring",
     ]
     return " ".join(part for part in parts if part).strip()
@@ -256,6 +276,7 @@ def build_search_queries(profile: Profile, limit: int) -> list[str]:
             profile.location.strip(),
             " ".join(profile.work_modes),
             " ".join(profile.contract_types),
+            f"{profile.minimum_salary} PLN" if profile.minimum_salary else "",
         )
         if part
     )
@@ -649,7 +670,7 @@ def _rank_offer(
 
     if profile.core_skills:
         skill_ratio = len(matched_skills) / len(profile.core_skills)
-        score += skill_ratio * 70
+        score += skill_ratio * 65
         if matched_skills:
             reasons.append(f"Matches {', '.join(matched_skills[:4])}")
     if profile.location and profile.location.casefold() in searchable:
@@ -669,6 +690,21 @@ def _rank_offer(
     if matched_contracts:
         score += 8
         reasons.append(f"Contract: {', '.join(matched_contracts)}")
+    matched_other_skills = [
+        skill for skill in profile.other_skills if skill.casefold() in searchable
+    ]
+    if matched_other_skills:
+        score += min(3, len(matched_other_skills))
+        reasons.append(f"Also matches {', '.join(matched_other_skills[:3])}")
+    matched_languages = [
+        language for language in profile.languages if language.casefold() in searchable
+    ]
+    if matched_languages:
+        score += 1
+        reasons.append(f"Language: {', '.join(matched_languages[:2])}")
+    if profile.minimum_salary and str(profile.minimum_salary) in searchable:
+        score += 1
+        reasons.append(f"Salary mentions {profile.minimum_salary}")
     if not reasons:
         reasons.append("Matches the core search query")
     return min(round(score, 1), 100), matched_skills, reasons

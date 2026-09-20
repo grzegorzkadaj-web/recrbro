@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
+from recrbro import api as api_module
 from recrbro import db, services
 from recrbro.api import app
 
@@ -43,6 +45,123 @@ def test_seeds_free_and_premium_users(client: TestClient) -> None:
         ("Free demo", "free"),
         ("Premium demo", "premium"),
     ]
+
+
+def test_profile_requires_authentication(client: TestClient) -> None:
+    response = client.get("/api/profile")
+
+    assert response.status_code == 401
+
+
+def test_user_can_register_and_access_own_profile(client: TestClient) -> None:
+    registration = client.post(
+        "/api/auth/register",
+        json={
+            "name": "Ada Candidate",
+            "email": "ada@example.com",
+            "password": "correct-horse-battery",
+        },
+    )
+
+    assert registration.status_code == 201
+    payload = registration.json()
+    assert payload["user"]["plan"] == "free"
+
+    response = client.get(
+        "/api/profile",
+        headers={"Authorization": f"Bearer {payload['token']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user_id"] == payload["user"]["id"]
+    assert response.json()["core_skills"] == []
+
+
+def test_free_account_search_is_queued(client: TestClient) -> None:
+    registration = client.post(
+        "/api/auth/register",
+        json={
+            "name": "Queue Tester",
+            "email": "queue@example.com",
+            "password": "correct-horse-battery",
+        },
+    ).json()
+    headers = {"Authorization": f"Bearer {registration['token']}"}
+    client.put(
+        "/api/profile",
+        headers=headers,
+        json={
+            "core_skills": ["Python"],
+            "other_skills": [],
+            "languages": ["English"],
+            "location": "Poland",
+            "work_modes": ["remote"],
+            "minimum_salary": None,
+            "contract_types": ["B2B"],
+            "excluded_companies": [],
+        },
+    )
+
+    response = client.post(
+        "/api/searches",
+        headers=headers,
+        json={"max_results": 100},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "queued"
+    assert response.json()["requested_results"] == 5
+
+    second = client.post(
+        "/api/searches",
+        headers=headers,
+        json={"max_results": 5},
+    )
+
+    first_time = datetime.fromisoformat(
+        response.json()["available_at"].replace("Z", "+00:00")
+    )
+    second_time = datetime.fromisoformat(
+        second.json()["available_at"].replace("Z", "+00:00")
+    )
+    assert second_time - first_time >= timedelta(minutes=60)
+
+
+def test_agent_requires_authentication(client: TestClient) -> None:
+    response = client.post("/agent", json={})
+
+    assert response.status_code == 401
+
+
+def test_email_failure_does_not_discard_completed_search(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    search_id = db.create_search(1, '"Python" Poland', requested_results=1)
+    offer = services.JobOffer(
+        title="Python Developer",
+        company="Example",
+        url="https://www.linkedin.com/jobs/view/123",
+        summary="Active Python role.",
+        score=90,
+        matched_skills=["Python"],
+        match_reasons=["Matches Python"],
+    )
+    monkeypatch.setattr(
+        api_module,
+        "search_linkedin",
+        lambda _profile, _limit: ('"Python" Poland', [offer], None),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "send_search_results",
+        lambda _email, _offers: (_ for _ in ()).throw(RuntimeError("SMTP offline")),
+    )
+
+    result = api_module._run_search(search_id)
+
+    assert result.status == "complete"
+    assert len(result.offers) == 1
+    assert "Email delivery failed" in (result.warning or "")
 
 
 def test_free_user_cannot_upload_cv(client: TestClient) -> None:

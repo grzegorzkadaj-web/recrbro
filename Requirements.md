@@ -87,12 +87,16 @@ It should implement sorting strategy according to the following criteria: skills
 - CopilotKit framework
 - SQLite storage for the local proof of concept
 
-# Proof of concept scope
+# Implemented product scope
 - FastAPI backend with a Next.js website
-- two seeded demo users: Free and Premium
+- authenticated email/password accounts and optional Google OAuth
+- optional seeded demo users for local development only
 - Premium users can upload a PDF CV for profile extraction
 - live LinkedIn job discovery is performed through Tavily
 - job offers are deduplicated and ranked by core skills, location, work mode, and contract type
 - CopilotKit provides an embedded assistant for refining search criteria
-- Free searches execute immediately in the PoC instead of using the production queue and email workflow
-- authentication, payments, scheduled search execution, and email delivery are deferred
+- Free searches are queued, rate-limited, run by a protected scheduled worker,
+  and delivered through SMTP
+- Premium upgrades use the Przelewy24 hosted checkout and support BLIK
+- production deployment uses separate frontend and API containers with one
+  persistent SQLite volume attached to a single API instance

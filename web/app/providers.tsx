@@ -11,6 +11,13 @@ export function Providers({ children }: { children: React.ReactNode }) {
       runtimeUrl="/api/copilotkit"
       agentId="recrbro_agent"
       useSingleEndpoint
+      headers={() => {
+        if (typeof window === "undefined") return {};
+        const token = window.localStorage.getItem("recrbro_session");
+        const headers: Record<string, string> = {};
+        if (token) headers.Authorization = `Bearer ${token}`;
+        return headers;
+      }}
     >
       {children}
       <CopilotSidebar

@@ -4,7 +4,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "Recrbro | Focused job search",
+  title: "RecrBro | Focused job search",
   description: "AI-assisted job discovery matched to your profile.",
 };
 

@@ -16,4 +16,36 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 OPENAI_JOB_ANALYSIS_MODEL = os.getenv("OPENAI_JOB_ANALYSIS_MODEL", "gpt-5-nano")
+OPENAI_INPUT_COST_PER_MILLION = float(
+    os.getenv("OPENAI_INPUT_COST_PER_MILLION", "0.40")
+)
+OPENAI_OUTPUT_COST_PER_MILLION = float(
+    os.getenv("OPENAI_OUTPUT_COST_PER_MILLION", "1.60")
+)
+USD_TO_PLN = float(os.getenv("USD_TO_PLN", "4.0"))
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "http://127.0.0.1:8000")
+SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "168"))
+FREE_SEARCH_DELAY_MINUTES = int(os.getenv("FREE_SEARCH_DELAY_MINUTES", "60"))
+FREE_SEARCH_SCHEDULE_MINUTES = int(os.getenv("FREE_SEARCH_SCHEDULE_MINUTES", "15"))
+SEARCH_LEASE_MINUTES = int(os.getenv("SEARCH_LEASE_MINUTES", "30"))
+SEED_DEMO_USERS = os.getenv("SEED_DEMO_USERS", "true").casefold() == "true"
+APP_ENV = os.getenv("APP_ENV", "development")
+APP_SECRET = os.getenv("APP_SECRET", "development-only-change-me")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+GOOGLE_REDIRECT_URI = os.getenv(
+    "GOOGLE_REDIRECT_URI", f"{PUBLIC_API_URL}/api/auth/google/callback"
+)
+SMTP_HOST = os.getenv("SMTP_HOST")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USERNAME = os.getenv("SMTP_USERNAME")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+SMTP_FROM = os.getenv("SMTP_FROM", "RecrBro <noreply@recrbro.app>")
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").casefold() == "true"
+WORKER_SECRET = os.getenv("WORKER_SECRET")
+P24_MERCHANT_ID = os.getenv("P24_MERCHANT_ID")
+P24_POS_ID = os.getenv("P24_POS_ID")
+P24_API_KEY = os.getenv("P24_API_KEY")
+P24_CRC = os.getenv("P24_CRC")
+P24_SANDBOX = os.getenv("P24_SANDBOX", "true").casefold() == "true"

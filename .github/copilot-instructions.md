@@ -10,7 +10,7 @@
 - queues and runs job searches,
 - presents results and tracks token cost.
 
-The repository is a two-part proof of concept: a FastAPI/LangGraph backend under
+The repository is a two-part production MVP: a FastAPI/LangGraph backend under
 `src/recrbro` and a Next.js/CopilotKit frontend under `web`.
 
 ## Setup and commands
@@ -39,6 +39,9 @@ strict TypeScript no-emit check rather than ESLint.
 - `src/recrbro/db.py` owns SQLite schema creation, seed data, and persistence.
 - `src/recrbro/services.py` owns PDF extraction, optional AI CV analysis, Tavily
   search, and deterministic result ranking.
+- `src/recrbro/auth.py` owns password hashing, opaque sessions, and Google OAuth.
+- `src/recrbro/payments.py` owns Przelewy24 registration and verification.
+- `src/recrbro/notifications.py` owns SMTP search-result delivery.
 - `src/recrbro/agent.py` exposes the LangGraph agent through AG-UI at `/agent`.
 - `web/app/api/copilotkit/route.ts` is the CopilotKit Runtime proxy between the
   browser and the Python AG-UI endpoint.
@@ -46,7 +49,8 @@ strict TypeScript no-emit check rather than ESLint.
   current profile/results through `useAgentContext` and narrowly scoped UI
   changes through `useFrontendTool`.
 - SQLite is intentionally used for this local, single-process PoC. The database
-  at `data/recrbro.db` is generated state and must not be committed.
+  at `data/recrbro.db` is generated state and must not be committed. Production
+  must remain a single API replica with the file on a persistent volume.
 
 ## Conventions and repository-specific patterns
 
@@ -58,7 +62,15 @@ strict TypeScript no-emit check rather than ESLint.
   Missing keys must produce explicit errors or visibly labelled degraded
   behavior; never invent job data.
 - Keep plan enforcement in the backend. The Free plan has a five-result cap and
-  cannot upload CVs; Premium can request up to 100 results.
+  cannot upload CVs; its searches are queued and rate-limited. Premium can
+  request up to 100 immediate results.
+- Never restore user-ID selection as an authorization mechanism. Production
+  user data is accessed only through the authenticated `/api/profile`,
+  `/api/searches`, `/api/usage`, and payment endpoints.
+- Keep payment fulfillment server-side: only a successfully signed and verified
+  Przelewy24 status callback can upgrade an account.
+- Keep the scheduled worker endpoint protected by `WORKER_SECRET`; worker
+  failures must persist as failed searches rather than appearing successful.
 - Store list-valued profile fields as JSON arrays in SQLite and expose them as
   typed arrays through the API.
 - Search ranking gives core-skill matches the dominant weight, then location,

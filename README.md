@@ -1,101 +1,123 @@
-# Recrbro proof of concept
+# RecrBro
 
-Recrbro is a local proof-of-concept website that builds a candidate profile from
-a CV, searches live LinkedIn job pages through Tavily, and ranks results against
-the candidate's core and optional criteria. The dashboard includes a CopilotKit
-assistant for refining the visible search profile.
+RecrBro is an authenticated job-search assistant that builds a candidate
+profile, discovers live LinkedIn job pages through Tavily, rejects inactive or
+location-ineligible offers, and ranks the remaining roles against the
+candidate's requirements.
+
+## Product behavior
+
+- Email/password accounts and Google OAuth sign-in.
+- Free accounts receive five results. Searches are queued, rate-limited, and
+  delivered by email when SMTP is configured.
+- Premium costs 50 PLN through Przelewy24/BLIK, runs searches immediately,
+  returns up to 100 offers, and enables AI-assisted PDF CV extraction.
+- Profiles include core and optional skills, languages, location, work mode,
+  minimum salary, contract type, and excluded companies.
+- AI usage and estimated USD cost are stored per account. Premium CV extraction
+  switches to the lower-cost model after tracked spend reaches 25 PLN.
+- The dashboard shows live progress messages while a Premium search runs and a
+  scheduled time while a Free search is queued.
 
 ## Architecture
 
-- **FastAPI** provides user, profile, CV, usage, and job-search APIs.
-- **SQLite** stores the two demo users, profiles, searches, offers, and AI usage.
-- **Tavily** runs several focused searches for skill and role variants, merges
-  and deduplicates the results, and retrieves current LinkedIn job-page content.
-  Each candidate is also fetched directly from LinkedIn and rejected when the
-  current page says applications are closed or when LinkedIn redirects to a
-  job-list page. When LinkedIn blocks a direct request, a canonical detail URL
-  may use Tavily-extracted content as an explicitly labelled fallback. Valid
-  links are stored as clean
-  `linkedin.com/jobs/view/{job-id}` detail URLs before deduplication, excluded
-  company filtering, and local ranking.
-- **LangGraph + CopilotKit** provide the embedded search assistant.
-- **Next.js** renders the dashboard and proxies CopilotKit runtime traffic to
-  the Python agent.
+- `src/recrbro/api.py`: FastAPI REST API, account boundary, search queue, worker
+  endpoint, security headers, and payment callback.
+- `src/recrbro/db.py`: SQLite schema, migrations, sessions, profiles, searches,
+  offers, payments, and usage events.
+- `src/recrbro/services.py`: PDF extraction, AI analysis, Tavily discovery,
+  LinkedIn page verification, and deterministic ranking.
+- `src/recrbro/payments.py`: Przelewy24 registration and verification.
+- `src/recrbro/notifications.py`: SMTP result delivery.
+- `src/recrbro/agent.py`: LangGraph agent exposed over AG-UI.
+- `web`: responsive Next.js 16 and CopilotKit interface.
 
-SQLite was selected because this is a single-process local PoC and its data is
-relational. The default database is created at `data/recrbro.db`.
+SQLite remains appropriate for this small, single-instance deployment. Do not
+run more than one API replica against the database file. Move to PostgreSQL
+before horizontal scaling.
 
-## Prerequisites
+## Local setup
 
-- Python 3.10 or newer
-- [uv](https://docs.astral.sh/uv/)
-- Node.js 20.9 or newer
-- Tavily API key for live job searches
-- OpenAI API key for CopilotKit chat, AI CV extraction, and job validation
-
-## Configure
-
-Copy `.env.example` to `.env` and set:
-
-```dotenv
-TAVILY_API_KEY=tvly-...
-OPENAI_API_KEY=sk-...
-OPENAI_JOB_ANALYSIS_MODEL=gpt-5-nano
-```
-
-Without `TAVILY_API_KEY`, search returns an explicit configuration error.
-Without `OPENAI_API_KEY`, the supplied CV can still be parsed using a visibly
-labelled local keyword fallback, but chat and job searches are unavailable.
-Job searches use the low-cost `gpt-5-nano` model by default to reject inactive
-offers and offers that do not allow working from the requested location.
-
-The sample CV is `data/cv/CV Grzegorz Kadaj en.pdf`.
-
-## Run locally
-
-Install Python dependencies and start the API:
+Requirements: Python 3.10+, [uv](https://docs.astral.sh/uv/), Node.js 20.9+,
+Tavily credentials, and OpenAI credentials.
 
 ```powershell
+Copy-Item .env.example .env
 uv sync
 uv run recrbro
 ```
 
-In another terminal, install and start the website:
+In another terminal:
 
 ```powershell
 Set-Location web
 Copy-Item .env.local.example .env.local
-npm install
+npm ci
 npm run dev
 ```
 
-Open <http://localhost:3000>. API documentation is available at
+Open <http://localhost:3000>. API documentation is at
 <http://127.0.0.1:8000/docs>.
 
-The database seeds two selectable users:
+`SEED_DEMO_USERS=true` preserves the two old local demo records for API
+regression tests, but the website uses real accounts. Set it to `false` outside
+local development.
 
-- `Free demo`: five results per search; CV analysis disabled.
-- `Premium demo`: up to 100 requested results; CV analysis enabled.
+## Required production configuration
 
-When there are not enough verified individual offers, the search automatically
-opens matching LinkedIn collection/search pages, extracts their individual job
-links, and runs those jobs through the same activity, location, and ranking
-checks. Collection pages themselves are not presented as offers.
+Generate strong independent values for `APP_SECRET` and `WORKER_SECRET`. Set
+`APP_ENV=production`, `SEED_DEMO_USERS=false`, the public frontend/API URLs,
+`RECRBRO_DATABASE_PATH=/data/recrbro.db`, and all provider credentials listed
+in `.env.example`.
 
-When fewer offers are found than requested, the response warning includes
-discovery diagnostics such as query count, duplicates, unresolved links,
-inactive offers, location mismatches, and Tavily-content fallbacks.
+For Google sign-in, register
+`https://<api-host>/api/auth/google/callback` as an authorized redirect URI.
+For Przelewy24, keep `P24_SANDBOX=true` until the merchant flow and callbacks
+pass certification. The implementation uses the official transaction register
+and verify flow documented at <https://developers.przelewy24.pl/>.
 
-For the PoC, both plans run searches immediately. Scheduled Free-plan execution,
-email delivery, authentication, and payments remain outside the prototype.
+Configure SMTP to deliver Free-plan results. Without SMTP, the completed search
+remains visible in the dashboard and carries an explicit delivery warning.
+LangSmith tracing uses the standard `LANGSMITH_*` variables.
 
-## Checks
+## Railway deployment
+
+[Railway](https://docs.railway.com/) is the recommended initial host because it
+supports Docker services, private networking, cron jobs, and a persistent
+volume for the single SQLite writer.
+
+1. Create an API service from this repository using the root `Dockerfile`.
+   Attach a volume at `/data`, set `RECRBRO_DATABASE_PATH=/data/recrbro.db`, and
+   configure the backend variables from `.env.example`.
+2. Create a web service from the `web` directory using `web/Dockerfile`. Set
+   `NEXT_PUBLIC_API_URL` as a build variable and `BACKEND_URL` as a runtime
+   variable to the API's public HTTPS URL.
+3. Set `FRONTEND_ORIGIN` on the API to the web service's exact HTTPS origin and
+   `PUBLIC_API_URL` to the API's exact HTTPS origin.
+4. Add a Railway cron service that runs every 15 minutes and invokes:
+
+   ```sh
+   curl --fail-with-body --request POST \
+     --header "X-Worker-Secret: $WORKER_SECRET" \
+     "$PUBLIC_API_URL/api/internal/run-due-searches"
+   ```
+
+5. Map custom domains, update the Google and Przelewy24 callback URLs, run a
+   sandbox payment, and verify `/health` before enabling production payments.
+6. Back up `/data/recrbro.db` regularly. Railway volumes are persistent, but
+   application-level backup and restore drills remain your responsibility.
+
+Railway volume guidance:
+<https://docs.railway.com/reference/volumes>. For larger traffic or multiple API
+replicas, migrate to managed PostgreSQL rather than sharing SQLite.
+
+## Validation
 
 ```powershell
 uv run pytest
-uv run pytest tests/test_api.py -k free_search
-uv run black --check src tests
+uv run black --check --target-version py310 src tests
 uv run isort --check-only src tests
+uv build
 
 Set-Location web
 npm run lint

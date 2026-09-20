@@ -1,7 +1,7 @@
 [project]
 name = "recrbro"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI-assisted job discovery with verified LinkedIn offers"
 readme = "README.md"
 authors = [
     { name = "Grzegorz Kadaj", email = "grzegorz.kadaj@rbo.pl" }
@@ -36,3 +36,6 @@ dev = [
     "httpx>=0.28,<1",
     "pytest>=8,<10",
 ]
+
+[tool.isort]
+profile = "black"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl
@@ -15,6 +16,20 @@ class User(BaseModel):
     result_limit: int
     monthly_budget_pln: float
     tracked_cost_usd: float
+
+
+class AuthRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=10, max_length=128)
+
+
+class RegisterRequest(AuthRequest):
+    name: str = Field(min_length=2, max_length=100)
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: User
 
 
 class Profile(BaseModel):
@@ -68,6 +83,28 @@ class SearchResponse(BaseModel):
     query: str
     offers: list[JobOffer]
     warning: str | None = None
+
+
+class SearchJob(BaseModel):
+    id: int
+    status: Literal["queued", "running", "complete", "failed"]
+    requested_results: int
+    query: str
+    offers: list[JobOffer] = Field(default_factory=list)
+    warning: str | None = None
+    error: str | None = None
+    available_at: datetime
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class CheckoutRequest(BaseModel):
+    method: Literal["przelewy24", "blik"] = "przelewy24"
+
+
+class CheckoutResponse(BaseModel):
+    payment_id: int
+    redirect_url: HttpUrl
 
 
 class UsageSummary(BaseModel):
