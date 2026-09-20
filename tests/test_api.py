@@ -70,6 +70,11 @@ def test_free_search_is_limited_and_ranked(
                         "title": f"Python Developer - Company {index}",
                         "url": f"https://www.linkedin.com/jobs/view/{index}",
                         "content": "Remote Python role in Poland with a B2B contract.",
+                        "raw_content": (
+                            "No longer accepting applications"
+                            if index == 0
+                            else "Apply now. Remote Python role in Poland with a B2B contract."
+                        ),
                     }
                     for index in range(10)
                 ]
@@ -85,3 +90,52 @@ def test_free_search_is_limited_and_ranked(
     assert len(offers) == 5
     assert offers[0]["score"] > 0
     assert "Python" in offers[0]["matched_skills"]
+    assert all(not offer["url"].endswith("/0") for offer in offers)
+
+
+def test_search_extracts_page_content_before_active_filtering(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            assert api_key == "test-key"
+
+        def search(self, **_: object) -> dict:
+            return {
+                "results": [
+                    {
+                        "title": "Python Developer - Closed Company",
+                        "url": "https://www.linkedin.com/jobs/view/closed",
+                        "content": "Python role in Poland.",
+                    },
+                    {
+                        "title": "Python Developer - Active Company",
+                        "url": "https://www.linkedin.com/jobs/view/active",
+                        "content": "Python role in Poland.",
+                    },
+                ]
+            }
+
+        def extract(self, **_: object) -> dict:
+            return {
+                "results": [
+                    {
+                        "url": "https://www.linkedin.com/jobs/view/closed",
+                        "raw_content": "No longer accepting applications",
+                    },
+                    {
+                        "url": "https://www.linkedin.com/jobs/view/active",
+                        "raw_content": "Apply now for this Python role.",
+                    },
+                ]
+            }
+
+    monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
+    monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
+
+    response = client.post("/api/users/2/search", json={"max_results": 10})
+
+    assert response.status_code == 200
+    offers = response.json()["offers"]
+    assert [offer["company"] for offer in offers] == ["Active Company"]
+    assert "closed or unverifiable offers were removed" in response.json()["warning"]

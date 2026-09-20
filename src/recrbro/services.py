@@ -13,6 +13,21 @@ from recrbro.config import OPENAI_API_KEY, OPENAI_MODEL, TAVILY_API_KEY
 from recrbro.db import record_usage
 from recrbro.models import CvAnalysis, JobOffer, Profile, ProfileUpdate
 
+CLOSED_OFFER_MARKERS = (
+    "no longer accepting applications",
+    "not accepting applications",
+    "applications are closed",
+    "applications have closed",
+    "application window has closed",
+    "this job is no longer available",
+    "job is no longer available",
+    "position is no longer available",
+    "position has been filled",
+    "vacancy has been filled",
+    "job has expired",
+    "job posting has expired",
+)
+
 
 class ExtractedCvProfile(BaseModel):
     target_roles: list[str] = Field(default_factory=list)
@@ -156,6 +171,38 @@ def _company_from_title(title: str) -> str:
     return "LinkedIn"
 
 
+def _offer_page_text(result: dict) -> str:
+    return " ".join(
+        str(result.get(field) or "") for field in ("title", "content", "raw_content")
+    ).strip()
+
+
+def _is_active_offer(result: dict) -> bool:
+    if not result.get("raw_content"):
+        return False
+    page_text = _offer_page_text(result).casefold()
+    return not any(marker in page_text for marker in CLOSED_OFFER_MARKERS)
+
+
+def _populate_missing_page_content(
+    client: TavilyClient, results_by_url: dict[str, dict]
+) -> None:
+    missing_urls = [
+        url for url, result in results_by_url.items() if not result.get("raw_content")
+    ]
+    for start in range(0, len(missing_urls), 20):
+        response = client.extract(
+            urls=missing_urls[start : start + 20],
+            extract_depth="advanced",
+            format="text",
+            timeout=60,
+        )
+        for extracted in response.get("results", []):
+            url = extracted.get("url")
+            if url in results_by_url:
+                results_by_url[url]["raw_content"] = extracted.get("raw_content") or ""
+
+
 def _rank_offer(
     title: str, content: str, profile: Profile
 ) -> tuple[float, list[str], list[str]]:
@@ -205,9 +252,10 @@ def search_linkedin(
     roles = profile.target_roles[:5] or ["job"]
     queries = [build_search_query(profile, role) for role in roles]
     results_by_url: dict[str, dict] = {}
+    candidate_limit = min(max(limit * 3, 20), 100)
 
     for query in queries:
-        remaining = limit - len(results_by_url)
+        remaining = candidate_limit - len(results_by_url)
         if remaining <= 0:
             break
         response = client.search(
@@ -216,20 +264,27 @@ def search_linkedin(
             max_results=min(20, max(remaining, 5)),
             include_domains=["linkedin.com"],
             topic="general",
+            include_raw_content="text",
         )
         for result in response.get("results", []):
             url = result.get("url", "")
             if "linkedin.com/jobs/" in url and url not in results_by_url:
                 results_by_url[url] = result
 
+    _populate_missing_page_content(client, results_by_url)
+
     excluded = {company.casefold() for company in profile.excluded_companies}
     offers: list[JobOffer] = []
+    closed_count = 0
     for result in results_by_url.values():
+        if not _is_active_offer(result):
+            closed_count += 1
+            continue
         title = result.get("title") or "LinkedIn job offer"
         company = _company_from_title(title)
         if any(name in company.casefold() for name in excluded):
             continue
-        content = result.get("content") or ""
+        content = result.get("raw_content") or result.get("content") or ""
         score, matched_skills, reasons = _rank_offer(title, content, profile)
         offers.append(
             JobOffer(
@@ -246,9 +301,14 @@ def search_linkedin(
     offers.sort(key=lambda offer: offer.score, reverse=True)
     warning = None
     if len(offers) < limit:
+        filter_note = (
+            f" {closed_count} closed or unverifiable offers were removed."
+            if closed_count
+            else ""
+        )
         warning = (
             f"Tavily returned {len(offers)} unique LinkedIn job pages for this query; "
-            f"the plan allows up to {limit}."
+            f"the plan allows up to {limit}.{filter_note}"
         )
     return queries[0], offers[:limit], warning
 

@@ -62,6 +62,9 @@ strict TypeScript no-emit check rather than ESLint.
   typed arrays through the API.
 - Search ranking gives core-skill matches the dominant weight, then location,
   work mode, and contract type. Preserve this ordering when tuning scores.
+- Search candidates must be checked against Tavily's extracted page content
+  before persistence. Reject closed/expired markers such as "No longer
+  accepting applications"; do not rely only on search-result snippets.
 - Use current CopilotKit v2 APIs from `@copilotkit/react-core/v2`; do not replace
   `useAgentContext`/`useFrontendTool` with deprecated v1 hooks.
 

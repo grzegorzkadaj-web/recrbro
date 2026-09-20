@@ -9,9 +9,10 @@ assistant for refining the visible search profile.
 
 - **FastAPI** provides user, profile, CV, usage, and job-search APIs.
 - **SQLite** stores the two demo users, profiles, searches, offers, and AI usage.
-- **Tavily** discovers current LinkedIn job pages. Search results are filtered to
-  LinkedIn job URLs, deduplicated, filtered by excluded company, and ranked
-  locally.
+- **Tavily** discovers current LinkedIn job pages and retrieves their page
+  content. Search results are filtered to LinkedIn job URLs, rejected when the
+  page says applications are closed or the offer is unavailable, deduplicated,
+  filtered by excluded company, and ranked locally.
 - **LangGraph + CopilotKit** provide the embedded search assistant.
 - **Next.js** renders the dashboard and proxies CopilotKit runtime traffic to
   the Python agent.
