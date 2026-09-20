@@ -71,6 +71,11 @@ The database seeds two selectable users:
 - `Free demo`: five results per search; CV analysis disabled.
 - `Premium demo`: up to 100 requested results; CV analysis enabled.
 
+The search form can optionally include LinkedIn collection/search pages when
+there are not enough verified individual offers. Individual job links are
+always listed first; collection entries are appended, labelled **Collection**,
+and do not display a match percentage.
+
 For the PoC, both plans run searches immediately. Scheduled Free-plan execution,
 email delivery, authentication, and payments remain outside the prototype.
 

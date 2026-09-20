@@ -37,6 +37,7 @@ type Profile = {
 };
 
 type JobOffer = {
+  result_type: "job" | "collection";
   title: string;
   company: string;
   url: string;
@@ -93,6 +94,7 @@ export default function Dashboard() {
   });
   const [offers, setOffers] = useState<JobOffer[]>([]);
   const [maxResults, setMaxResults] = useState(10);
+  const [includeCollections, setIncludeCollections] = useState(false);
   const [status, setStatus] = useState("Loading profile...");
   const [warning, setWarning] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -147,12 +149,16 @@ export default function Dashboard() {
       user: selectedUser ?? null,
       profile,
       requestedResults: maxResults,
-      visibleOffers: offers.map(({ title, company, score, match_reasons }) => ({
-        title,
-        company,
-        score,
-        match_reasons,
-      })),
+      includeCollectionsIfNeeded: includeCollections,
+      visibleOffers: offers.map(
+        ({ title, company, score, match_reasons, result_type }) => ({
+          title,
+          company,
+          score,
+          match_reasons,
+          result_type,
+        }),
+      ),
     },
   });
 
@@ -253,7 +259,10 @@ export default function Dashboard() {
       }>(`/api/users/${selectedUserId}/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ max_results: maxResults }),
+        body: JSON.stringify({
+          max_results: maxResults,
+          include_collections_if_needed: includeCollections,
+        }),
       });
       setOffers(result.offers);
       setWarning(result.warning);
@@ -480,6 +489,17 @@ export default function Dashboard() {
             </strong>
             <span>offers</span>
           </div>
+          <label className="collectionToggle">
+            <input
+              type="checkbox"
+              checked={includeCollections}
+              onChange={(event) => setIncludeCollections(event.target.checked)}
+            />
+            <span>
+              Include LinkedIn result pages if there are not enough verified
+              offers
+            </span>
+          </label>
           <button
             className="primaryButton"
             onClick={runSearch}
@@ -520,18 +540,32 @@ export default function Dashboard() {
         ) : (
           <div className="offerList">
             {offers.map((offer, index) => (
-              <article className="offerCard" key={offer.url}>
+              <article
+                className={`offerCard ${offer.result_type === "collection" ? "collectionCard" : ""}`}
+                key={offer.url}
+              >
                 <div className="rank">{String(index + 1).padStart(2, "0")}</div>
                 <div className="offerBody">
                   <div className="offerTitle">
                     <div>
-                      <p>{offer.company}</p>
+                      <p>
+                        {offer.company}
+                        {offer.result_type === "collection" && (
+                          <span className="collectionBadge">Collection</span>
+                        )}
+                      </p>
                       <h3>{offer.title}</h3>
                     </div>
-                    <div className="score">
-                      <strong>{Math.round(offer.score)}%</strong>
-                      <span>match</span>
-                    </div>
+                    {offer.result_type === "job" ? (
+                      <div className="score">
+                        <strong>{Math.round(offer.score)}%</strong>
+                        <span>match</span>
+                      </div>
+                    ) : (
+                      <div className="collectionIcon" aria-hidden="true">
+                        ⋯
+                      </div>
+                    )}
                   </div>
                   <p className="summary">{offer.summary}</p>
                   <div className="tags">
@@ -546,7 +580,8 @@ export default function Dashboard() {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Open offer <span>↗</span>
+                  {offer.result_type === "job" ? "Open offer" : "Browse offers"}{" "}
+                  <span>↗</span>
                 </a>
               </article>
             ))}

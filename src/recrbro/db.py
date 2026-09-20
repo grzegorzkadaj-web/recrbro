@@ -79,6 +79,7 @@ def initialize_database() -> None:
             CREATE TABLE IF NOT EXISTS job_offers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 search_id INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
+                result_type TEXT NOT NULL DEFAULT 'job',
                 title TEXT NOT NULL,
                 company TEXT NOT NULL,
                 url TEXT NOT NULL,
@@ -99,6 +100,13 @@ def initialize_database() -> None:
                 created_at TEXT NOT NULL
             );
             """)
+        offer_columns = {
+            row["name"] for row in database.execute("PRAGMA table_info(job_offers)")
+        }
+        if "result_type" not in offer_columns:
+            database.execute(
+                "ALTER TABLE job_offers ADD COLUMN result_type TEXT NOT NULL DEFAULT 'job'"
+            )
         seed_users = [
             (1, "Free demo", "free@recrbro.local", "free", 5, 0),
             (2, "Premium demo", "premium@recrbro.local", "premium", 100, 50),
@@ -220,13 +228,14 @@ def complete_search(
         database.executemany(
             """
             INSERT INTO job_offers
-                (search_id, title, company, url, summary, score,
+                (search_id, result_type, title, company, url, summary, score,
                  matched_skills, match_reasons)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
                     search_id,
+                    offer.result_type,
                     offer.title,
                     offer.company,
                     str(offer.url),

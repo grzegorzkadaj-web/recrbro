@@ -73,6 +73,9 @@ strict TypeScript no-emit check rather than ESLint.
   because Tavily snippets can omit LinkedIn's `closed-job` banner. Reject a
   result when the direct HTML contains a closed/expired marker even if Tavily's
   extracted content looks active.
+- Collection/search pages are opt-in fallback results only. Append them after
+  all verified individual jobs, set `result_type="collection"`, give them no
+  match score, and label them clearly in the UI.
 - Use current CopilotKit v2 APIs from `@copilotkit/react-core/v2`; do not replace
   `useAgentContext`/`useFrontendTool` with deprecated v1 hooks.
 

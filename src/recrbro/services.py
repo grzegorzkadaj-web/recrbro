@@ -4,8 +4,9 @@ import re
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+from typing import Literal
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 from langchain_openai import ChatOpenAI
@@ -33,6 +34,7 @@ CLOSED_OFFER_MARKERS = (
     "closed-job__flavor--closed",
 )
 LINKEDIN_JOB_PATH = re.compile(r"^/jobs/view/(?:.+-)?(?P<job_id>\d+)/?$")
+TRACKING_QUERY_KEYS = {"trk", "trackingId", "refId", "currentJobId"}
 
 
 class ExtractedCvProfile(BaseModel):
@@ -197,7 +199,36 @@ def _canonical_linkedin_job_url(url: str) -> str | None:
     return f"https://www.linkedin.com/jobs/view/{match.group('job_id')}"
 
 
-def _resolve_job_url(url: str) -> tuple[str, str] | None:
+def _canonical_linkedin_collection_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").casefold()
+    if (
+        not (hostname == "linkedin.com" or hostname.endswith(".linkedin.com"))
+        or not parsed.path.startswith("/jobs/")
+        or LINKEDIN_JOB_PATH.fullmatch(parsed.path)
+    ):
+        return None
+    query = urlencode(
+        [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=False)
+            if key not in TRACKING_QUERY_KEYS
+        ]
+    )
+    return urlunparse(("https", "www.linkedin.com", parsed.path, "", query, ""))
+
+
+def _is_linkedin_jobs_url(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").casefold()
+    return (
+        hostname == "linkedin.com" or hostname.endswith(".linkedin.com")
+    ) and parsed.path.startswith("/jobs/")
+
+
+def _resolve_linkedin_page(
+    url: str,
+) -> tuple[Literal["job", "collection"], str, str] | None:
     request = Request(
         url,
         method="GET",
@@ -205,37 +236,48 @@ def _resolve_job_url(url: str) -> tuple[str, str] | None:
     )
     try:
         with urlopen(request, timeout=15) as response:
-            canonical_url = _canonical_linkedin_job_url(response.geturl())
-            if canonical_url is None:
+            final_url = response.geturl()
+            canonical_job_url = _canonical_linkedin_job_url(final_url)
+            canonical_collection_url = _canonical_linkedin_collection_url(final_url)
+            if canonical_job_url is not None:
+                result_type: Literal["job", "collection"] = "job"
+                canonical_url = canonical_job_url
+            elif canonical_collection_url is not None:
+                result_type = "collection"
+                canonical_url = canonical_collection_url
+            else:
                 return None
             page_content = response.read(2_000_000).decode("utf-8", errors="ignore")
-            return canonical_url, page_content
+            return result_type, canonical_url, page_content
     except (HTTPError, URLError, TimeoutError, ValueError):
         return None
 
 
-def _verify_job_detail_urls(
+def _verify_linkedin_urls(
     results_by_url: dict[str, dict],
-) -> tuple[dict[str, dict], int]:
+) -> tuple[dict[str, dict], dict[str, dict], int]:
     if not results_by_url:
-        return {}, 0
+        return {}, {}, 0
 
     urls = list(results_by_url)
     with ThreadPoolExecutor(max_workers=min(8, len(urls))) as executor:
-        resolved_urls = list(executor.map(_resolve_job_url, urls))
+        resolved_pages = list(executor.map(_resolve_linkedin_page, urls))
 
-    verified: dict[str, dict] = {}
-    for original_url, resolved in zip(urls, resolved_urls, strict=True):
+    jobs: dict[str, dict] = {}
+    collections: dict[str, dict] = {}
+    for original_url, resolved in zip(urls, resolved_pages, strict=True):
         if resolved is None:
             continue
-        resolved_url, page_content = resolved
-        if resolved_url in verified:
+        result_type, resolved_url, page_content = resolved
+        destination = jobs if result_type == "job" else collections
+        if resolved_url in destination:
             continue
         result = results_by_url[original_url]
         result["url"] = resolved_url
         result["linkedin_page_content"] = page_content
-        verified[resolved_url] = result
-    return verified, len(results_by_url) - len(verified)
+        destination[resolved_url] = result
+    unresolved_count = len(results_by_url) - len(jobs) - len(collections)
+    return jobs, collections, unresolved_count
 
 
 def _is_active_offer(result: dict) -> bool:
@@ -301,8 +343,16 @@ def _rank_offer(
     return min(round(score, 1), 100), matched_skills, reasons
 
 
+def _collection_title(url: str) -> str:
+    slug = urlparse(url).path.rstrip("/").rsplit("/", 1)[-1]
+    if slug == "search":
+        return "More matching jobs on LinkedIn"
+    words = slug.removesuffix("-jobs").replace("-", " ").strip()
+    return f"More {words} jobs".title()
+
+
 def search_linkedin(
-    profile: Profile, limit: int
+    profile: Profile, limit: int, include_collections_if_needed: bool = False
 ) -> tuple[str, list[JobOffer], str | None]:
     if not TAVILY_API_KEY:
         raise RuntimeError(
@@ -329,16 +379,18 @@ def search_linkedin(
         )
         for result in response.get("results", []):
             url = result.get("url", "")
-            if _canonical_linkedin_job_url(url) and url not in results_by_url:
+            if _is_linkedin_jobs_url(url) and url not in results_by_url:
                 results_by_url[url] = result
 
-    results_by_url, invalid_link_count = _verify_job_detail_urls(results_by_url)
-    _populate_missing_page_content(client, results_by_url)
+    job_results, collection_results, invalid_link_count = _verify_linkedin_urls(
+        results_by_url
+    )
+    _populate_missing_page_content(client, job_results)
 
     excluded = {company.casefold() for company in profile.excluded_companies}
     offers: list[JobOffer] = []
     filtered_count = invalid_link_count
-    for result in results_by_url.values():
+    for result in job_results.values():
         if not _is_active_offer(result):
             filtered_count += 1
             continue
@@ -350,6 +402,7 @@ def search_linkedin(
         score, matched_skills, reasons = _rank_offer(title, content, profile)
         offers.append(
             JobOffer(
+                result_type="job",
                 title=title,
                 company=company,
                 url=result["url"],
@@ -361,6 +414,29 @@ def search_linkedin(
         )
 
     offers.sort(key=lambda offer: offer.score, reverse=True)
+    offers = offers[:limit]
+
+    if include_collections_if_needed and len(offers) < limit:
+        for result in collection_results.values():
+            if len(offers) >= limit:
+                break
+            offers.append(
+                JobOffer(
+                    result_type="collection",
+                    title=_collection_title(result["url"]),
+                    company="LinkedIn job collection",
+                    url=result["url"],
+                    summary=(
+                        "A LinkedIn results page with additional related vacancies. "
+                        "Open it to review and verify individual job offers."
+                    ),
+                    score=0,
+                    match_reasons=[
+                        "Collection of offers · individual jobs are not verified"
+                    ],
+                )
+            )
+
     warning = None
     if len(offers) < limit:
         filter_note = (
@@ -372,7 +448,7 @@ def search_linkedin(
             f"Tavily returned {len(offers)} unique LinkedIn job pages for this query; "
             f"the plan allows up to {limit}.{filter_note}"
         )
-    return queries[0], offers[:limit], warning
+    return queries[0], offers, warning
 
 
 def profile_update_from_profile(profile: Profile) -> ProfileUpdate:

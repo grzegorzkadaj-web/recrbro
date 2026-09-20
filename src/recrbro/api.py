@@ -109,7 +109,11 @@ def search(user_id: int, payload: SearchRequest) -> SearchResponse:
             detail="Add at least one target role or core skill before searching.",
         )
     try:
-        query, offers, warning = search_linkedin(profile, limit)
+        query, offers, warning = search_linkedin(
+            profile,
+            limit,
+            include_collections_if_needed=payload.include_collections_if_needed,
+        )
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     search_id = create_search(user_id, query)

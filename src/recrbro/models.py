@@ -51,10 +51,12 @@ class CvAnalysis(BaseModel):
 
 class SearchRequest(BaseModel):
     max_results: int = Field(default=10, ge=1, le=100)
+    include_collections_if_needed: bool = False
 
 
 class JobOffer(BaseModel):
     id: int | None = None
+    result_type: Literal["job", "collection"] = "job"
     title: str
     company: str
     url: HttpUrl

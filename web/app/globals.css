@@ -388,6 +388,29 @@ input:focus {
   color: #b8c3c2;
 }
 
+.collectionToggle {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px;
+  align-items: start;
+  margin: 0 0 24px;
+  color: #cad3d2;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.collectionToggle input {
+  width: 17px;
+  height: 17px;
+  margin: 1px 0 0;
+  accent-color: var(--mint);
+}
+
+.collectionToggle span {
+  margin: 0;
+  font-weight: 500;
+}
+
 .primaryButton {
   display: flex;
   width: 100%;
@@ -495,6 +518,11 @@ input:focus {
   box-shadow: var(--shadow);
 }
 
+.offerCard.collectionCard {
+  border-style: dashed;
+  background: #eeeee8;
+}
+
 .rank {
   color: #97a4a1;
   font-family: Georgia, "Times New Roman", serif;
@@ -510,6 +538,18 @@ input:focus {
   text-transform: uppercase;
 }
 
+.collectionBadge {
+  display: inline-block;
+  margin-left: 9px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: #d9ddd6;
+  color: #546361;
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  vertical-align: middle;
+}
+
 .offerTitle h3 {
   margin-bottom: 0;
   font-size: 19px;
@@ -522,6 +562,18 @@ input:focus {
 .score strong,
 .score span {
   display: block;
+}
+
+.collectionIcon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 50%;
+  background: #d9ddd6;
+  color: #546361;
+  font-size: 22px;
+  letter-spacing: 2px;
 }
 
 .score strong {

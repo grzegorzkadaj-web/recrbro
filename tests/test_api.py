@@ -61,8 +61,9 @@ def test_free_search_is_limited_and_ranked(
 ) -> None:
     monkeypatch.setattr(
         services,
-        "_resolve_job_url",
+        "_resolve_linkedin_page",
         lambda url: (
+            "job",
             services._canonical_linkedin_job_url(url),
             "Apply now for this open role.",
         ),
@@ -107,8 +108,9 @@ def test_search_extracts_page_content_before_active_filtering(
 ) -> None:
     monkeypatch.setattr(
         services,
-        "_resolve_job_url",
+        "_resolve_linkedin_page",
         lambda url: (
+            "job",
             services._canonical_linkedin_job_url(url),
             "Apply now for this open role.",
         ),
@@ -189,7 +191,11 @@ def test_resolved_collection_page_is_not_a_job_detail(
 
     monkeypatch.setattr(services, "urlopen", lambda *_args, **_kwargs: FakeResponse())
 
-    assert services._resolve_job_url(reported_url) is None
+    assert services._resolve_linkedin_page(reported_url) == (
+        "collection",
+        "https://www.linkedin.com/jobs/senior-php-developer-jobs",
+        "",
+    )
 
 
 def test_resolved_job_url_is_canonicalized(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -210,7 +216,10 @@ def test_resolved_job_url_is_canonicalized(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(services, "urlopen", lambda *_args, **_kwargs: FakeResponse())
 
-    assert services._resolve_job_url("https://linkedin.com/jobs/view/4457269750") == (
+    assert services._resolve_linkedin_page(
+        "https://linkedin.com/jobs/view/4457269750"
+    ) == (
+        "job",
         "https://www.linkedin.com/jobs/view/4457269750",
         "Apply now for this Python role.",
     )
@@ -238,12 +247,13 @@ def test_detail_page_with_closed_banner_is_inactive(
 
     monkeypatch.setattr(services, "urlopen", lambda *_args, **_kwargs: FakeResponse())
 
-    resolved = services._resolve_job_url(
+    resolved = services._resolve_linkedin_page(
         "https://www.linkedin.com/jobs/view/3834648737/"
     )
 
     assert resolved is not None
-    url, page_content = resolved
+    result_type, url, page_content = resolved
+    assert result_type == "job"
     assert url == "https://www.linkedin.com/jobs/view/3834648737"
     assert not services._is_active_offer(
         {
@@ -252,3 +262,55 @@ def test_detail_page_with_closed_banner_is_inactive(
             "linkedin_page_content": page_content,
         }
     )
+
+
+def test_collections_fill_only_missing_slots_when_requested(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            assert api_key == "test-key"
+
+        def search(self, **_: object) -> dict:
+            return {
+                "results": [
+                    {
+                        "title": "Python Developer - Active Company",
+                        "url": "https://www.linkedin.com/jobs/view/2001",
+                        "content": "Python role in Poland.",
+                        "raw_content": "Apply now for this Python role.",
+                    },
+                    {
+                        "title": "Python Developer jobs",
+                        "url": "https://www.linkedin.com/jobs/python-developer-jobs",
+                        "content": "Browse Python developer jobs.",
+                    },
+                ]
+            }
+
+    def resolve(url: str):
+        if "/view/" in url:
+            return (
+                "job",
+                "https://www.linkedin.com/jobs/view/2001",
+                "Apply now for this Python role.",
+            )
+        return (
+            "collection",
+            "https://www.linkedin.com/jobs/python-developer-jobs",
+            "Browse matching jobs.",
+        )
+
+    monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
+    monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
+    monkeypatch.setattr(services, "_resolve_linkedin_page", resolve)
+
+    response = client.post(
+        "/api/users/2/search",
+        json={"max_results": 3, "include_collections_if_needed": True},
+    )
+
+    assert response.status_code == 200
+    offers = response.json()["offers"]
+    assert [offer["result_type"] for offer in offers] == ["job", "collection"]
+    assert offers[-1]["score"] == 0
