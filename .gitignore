@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Recrbro local state and frontend artifacts
+data/*.db
+data/*.db-journal
+web/node_modules/
+web/.next/
+web/.env.local

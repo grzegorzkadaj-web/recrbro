@@ -1,6 +1,7 @@
-- use requirements from Requirements.md file
-- use local db as a storage
+- take requirements from Requirements.md file
+- decide what db to use as a storage
 - to create a website use CopilotKit but prepare a very simple GUI design but with good UX
 - update Requirements.md or update/add copilot skills or add mcp servers if needed
 - run website locally but it should work on real data from LinkedIn
-- create two users by default: Free and Premium
+- there is a "data/cv/CV Grzegorz Kadaj en.pdf" as a sample cv file for testing purposes
+- create two users by default (Free and Premium)

@@ -28,8 +28,10 @@ Preconditions:
 - user should be logged in
 
 Scenario:
-- get to User Profile
-- update and accept
+- get to User Profile - User
+- update Core criteria - User
+- update other criteraa - User
+- accept - User
 
 ## Search for job offers
 Preconditions:
@@ -45,11 +47,23 @@ Scenario:
 
 # Requirements
 - user should be able to create its own profile by loading CV in PDF which is then analysed by ai model to collect skills and language 
-- user should be able to update its profile manually4
+- user should be able to update its profile manually
 - user should be able to load list of companies that are out of his interest
 - costs of tokens should be registered to have a current cost per user tracked
 - non-technical search criteria that are provided by user: area (like country or city), work type (remote, on-site, hybryd), salary required, agreement type (b2b contract, labor agreement)
 - other search criteria should be taken by default from a user profile
+
+# Architecture
+## Job Offers Request
+Before app executes request for jobs it should prepare a criteria. As fitting all user skills and criteria is not possible or would be limited to the only few job offers it should be a core criteria that job offer should match. Other criteria should be used for sorting to let user find most accurate jobs at the top of the list.
+Limit job offers to only active ones if possible.
+
+## Job Offers Response
+As a result it should sorted list presented. The main part of list item should be a link to job offer.
+List should not present a non active jobs.
+
+## Job listing
+It should implement sorting strategy according to the following criteria: skills matching, non-technical criteria matching
 
 # Pricing
 ## Free
@@ -71,4 +85,14 @@ Scenario:
 - LangChain - AI infrastructure
 - LangSmith - monitoring
 - CopilotKit framework
-- storage ???
+- SQLite storage for the local proof of concept
+
+# Proof of concept scope
+- FastAPI backend with a Next.js website
+- two seeded demo users: Free and Premium
+- Premium users can upload a PDF CV for profile extraction
+- live LinkedIn job discovery is performed through Tavily
+- job offers are deduplicated and ranked by core skills, location, work mode, and contract type
+- CopilotKit provides an embedded assistant for refining search criteria
+- Free searches execute immediately in the PoC instead of using the production queue and email workflow
+- authentication, payments, scheduled search execution, and email delivery are deferred

@@ -10,47 +10,60 @@
 - queues and runs job searches,
 - presents results and tracks token cost.
 
-The current codebase is intentionally minimal: it is a Python package under `src/recrbro` with a single entry point at `src/recrbro/__init__.py`.
+The repository is a two-part proof of concept: a FastAPI/LangGraph backend under
+`src/recrbro` and a Next.js/CopilotKit frontend under `web`.
 
 ## Setup and commands
 
 Use `uv` for dependency management and command execution, because the project is configured as a `uv`-managed Python package.
 
 - Install dependencies: `uv sync`
-- Run the app: `uv run recrbro`
+- Run the API: `uv run recrbro`
 - Build the package: `uv build`
 - Format code: `uv run black .` and `uv run isort .`
+- Run backend tests: `uv run pytest`
+- Run one backend test: `uv run pytest tests/test_api.py -k free_search`
+- Install frontend dependencies: `cd web; npm install`
+- Run the frontend: `cd web; npm run dev`
+- Type-check the frontend: `cd web; npm run lint`
+- Build the frontend: `cd web; npm run build`
 
 ### Tests and linting
 
-There is no explicit test suite or lint command configured in this repository right now. The project does not currently define `pytest`, `tox`, `nox`, or an equivalent lint configuration in `pyproject.toml`.
-
-If a test runner is added later, prefer the single-test form:
-
-- `uv run pytest path/to/test_file.py -k "test_name"`
-
-This keeps validation focused while the repo is still small.
+Backend API tests use `pytest` and FastAPI's `TestClient`. Frontend linting is a
+strict TypeScript no-emit check rather than ESLint.
 
 ## Architecture
 
-The important architectural fact is that this is a single-package Python app, not a multi-service or multi-module system.
-
-- Source code lives under `src/recrbro/`.
-- The public console entry point is defined in `pyproject.toml` as `recrbro = "recrbro:main"`.
-- The actual implementation currently lives in `src/recrbro/__init__.py` via the `main()` function.
-- The project uses a `src/` layout, so keep new code under `src/recrbro` rather than at the repository root.
-- A local `.env` file exists in `src/recrbro/.env`; keep secrets and environment-specific values out of the repo and treat them as deployment/runtime configuration rather than app logic.
-
-The repository is still at the prototype stage: requirements are broader than the code, and most of the product is planned rather than implemented. Prefer simple, focused changes that stay compatible with a small package structure.
+- `src/recrbro/api.py` is the FastAPI application and REST boundary.
+- `src/recrbro/db.py` owns SQLite schema creation, seed data, and persistence.
+- `src/recrbro/services.py` owns PDF extraction, optional AI CV analysis, Tavily
+  search, and deterministic result ranking.
+- `src/recrbro/agent.py` exposes the LangGraph agent through AG-UI at `/agent`.
+- `web/app/api/copilotkit/route.ts` is the CopilotKit Runtime proxy between the
+  browser and the Python AG-UI endpoint.
+- `web/app/page.tsx` is a conventional controlled React dashboard. It exposes
+  current profile/results through `useAgentContext` and narrowly scoped UI
+  changes through `useFrontendTool`.
+- SQLite is intentionally used for this local, single-process PoC. The database
+  at `data/recrbro.db` is generated state and must not be committed.
 
 ## Conventions and repository-specific patterns
 
 - Keep the project Python 3.10+ compatible (`requires-python = ">=3.10"`).
 - Prefer `uv` commands over raw `python`/`pip` to match the project toolchain.
-- Avoid introducing new top-level modules unless the project clearly grows beyond the current package structure.
 - Keep environment and secrets handling separate from application logic.
-- The repo already includes `black` and `isort` as dependencies, so prefer formatting that matches those tools when adding code.
-- Maintain the small-project conventions: minimal dependencies, no unnecessary framework scaffolding, and no broad refactors while the app is still in an early state.
+- Use `TAVILY_API_KEY` for live searches and `OPENAI_API_KEY` for the assistant
+  and AI CV extraction. Missing keys must produce explicit errors or visibly
+  labelled degraded behavior; never invent job data.
+- Keep plan enforcement in the backend. The Free plan has a five-result cap and
+  cannot upload CVs; Premium can request up to 100 results.
+- Store list-valued profile fields as JSON arrays in SQLite and expose them as
+  typed arrays through the API.
+- Search ranking gives core-skill matches the dominant weight, then location,
+  work mode, and contract type. Preserve this ordering when tuning scores.
+- Use current CopilotKit v2 APIs from `@copilotkit/react-core/v2`; do not replace
+  `useAgentContext`/`useFrontendTool` with deprecated v1 hooks.
 
 ## Working style expectations
 
