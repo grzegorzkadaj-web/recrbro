@@ -4,13 +4,44 @@ This a requirements description for aplication which searches throught LinkedIn 
 Workers are wasting time on searching for a job offers that are not matched or not active.
 # Vision
 The main goal is to help employees to find a job as fast as possible. 
-# Main Use Case
+# Main flow
 - log in with Google Account or create a account
 - load CV in PDF
 - provide additional criteria
 - choose a pricing plan: free or premium
 - execute job searching
 - preview results
+
+# Use Cases
+## Upload CV in PDF
+Preconditions:
+- this feature is available only for Premium Plan
+- user should be logged in
+
+Scenario:
+- upload CV - User
+- analyse CV - AI Agent
+- update and accept your profile in terms of technical and non-technical skills you have - User
+
+## Update Profile
+Preconditions:
+- user should be logged in
+
+Scenario:
+- get to User Profile
+- update and accept
+
+## Search for job offers
+Preconditions:
+- User Profile should be prepared
+- in a case if rich model exceeds limit or User has a Free Plan then use cheapest AI model for all steps
+
+Scenario:
+- click Search - User
+- analyse User Profile and prepare request - AI Agent
+- execute request - AI Agent
+- display results - AI Agent
+- click job offer that is open in new browser tab  -User
 
 # Requirements
 - user should be able to create its own profile by loading CV in PDF which is then analysed by ai model to collect skills and language 

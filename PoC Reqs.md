@@ -1,0 +1,6 @@
+- use requirements from Requirements.md file
+- use local db as a storage
+- to create a website use CopilotKit but prepare a very simple GUI design but with good UX
+- update Requirements.md or update/add copilot skills or add mcp servers if needed
+- run website locally but it should work on real data from LinkedIn
+- create two users by default: Free and Premium
