@@ -53,9 +53,10 @@ strict TypeScript no-emit check rather than ESLint.
 - Keep the project Python 3.10+ compatible (`requires-python = ">=3.10"`).
 - Prefer `uv` commands over raw `python`/`pip` to match the project toolchain.
 - Keep environment and secrets handling separate from application logic.
-- Use `TAVILY_API_KEY` for live searches and `OPENAI_API_KEY` for the assistant
-  and AI CV extraction. Missing keys must produce explicit errors or visibly
-  labelled degraded behavior; never invent job data.
+- Use `TAVILY_API_KEY` for live searches and `OPENAI_API_KEY` for the assistant,
+  AI CV extraction, and AI validation of offer activity and location eligibility.
+  Missing keys must produce explicit errors or visibly labelled degraded
+  behavior; never invent job data.
 - Keep plan enforcement in the backend. The Free plan has a five-result cap and
   cannot upload CVs; Premium can request up to 100 results.
 - Store list-valued profile fields as JSON arrays in SQLite and expose them as

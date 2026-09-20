@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +15,24 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test.db")
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def accept_job_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
+    def assess(
+        _profile: object, results_by_url: dict[str, dict]
+    ) -> dict[str, services.JobAssessment]:
+        return {
+            url: services.JobAssessment(
+                candidate_id=index,
+                is_active=True,
+                location_matches=True,
+                reason="Test fixture accepts the offer.",
+            )
+            for index, url in enumerate(results_by_url)
+        }
+
+    monkeypatch.setattr(services, "_assess_job_results", assess)
 
 
 def test_seeds_free_and_premium_users(client: TestClient) -> None:
@@ -65,7 +84,9 @@ def test_search_query_uses_criteria_without_target_role(client: TestClient) -> N
 
 
 def test_free_search_is_limited_and_ranked(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    accept_job_analysis: None,
 ) -> None:
     monkeypatch.setattr(
         services,
@@ -112,7 +133,9 @@ def test_free_search_is_limited_and_ranked(
 
 
 def test_search_extracts_page_content_before_active_filtering(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    accept_job_analysis: None,
 ) -> None:
     monkeypatch.setattr(
         services,
@@ -167,7 +190,7 @@ def test_search_extracts_page_content_before_active_filtering(
     offers = response.json()["offers"]
     assert [offer["company"] for offer in offers] == ["Active Company"]
     assert (
-        "non-detail, closed, or unverifiable offers were removed"
+        "non-detail, inactive, location-mismatched, or unverifiable offers were removed"
         in response.json()["warning"]
     )
 
@@ -250,7 +273,8 @@ def test_detail_page_with_closed_banner_is_inactive(
             return (
                 b'<figure class="closed-job">'
                 b'<figcaption class="closed-job__flavor--closed">'
-                b"No longer accepting applications</figcaption></figure>"
+                b"Not currently <strong>accepting</strong> applications"
+                b"</figcaption></figure>"
             )
 
     monkeypatch.setattr(services, "urlopen", lambda *_args, **_kwargs: FakeResponse())
@@ -272,8 +296,192 @@ def test_detail_page_with_closed_banner_is_inactive(
     )
 
 
-def test_collections_fill_only_missing_slots_when_requested(
+def test_ai_assesses_activity_and_requested_location(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeStructuredModel:
+        def invoke(self, messages: list[tuple[str, str]]) -> dict:
+            captured["messages"] = messages
+            return {
+                "parsed": services.JobAssessmentBatch(
+                    assessments=[
+                        services.JobAssessment(
+                            candidate_id=0,
+                            is_active=False,
+                            location_matches=True,
+                            reason="Applications are not being accepted.",
+                        ),
+                        services.JobAssessment(
+                            candidate_id=1,
+                            is_active=True,
+                            location_matches=False,
+                            reason="Remote work is restricted to the United States.",
+                        ),
+                    ]
+                ),
+                "raw": SimpleNamespace(
+                    usage_metadata={"input_tokens": 1000, "output_tokens": 100}
+                ),
+            }
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs: object):
+            captured["model_kwargs"] = kwargs
+
+        def with_structured_output(
+            self, schema: type, **kwargs: object
+        ) -> FakeStructuredModel:
+            assert schema is services.JobAssessmentBatch
+            captured["structured_kwargs"] = kwargs
+            return FakeStructuredModel()
+
+    recorded_usage: list[dict[str, object]] = []
+    monkeypatch.setattr(services, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(services, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(
+        services, "record_usage", lambda **kwargs: recorded_usage.append(kwargs)
+    )
+    profile = db.get_profile(2)
+    assert profile is not None
+    results = {
+        "https://www.linkedin.com/jobs/view/1": {
+            "title": "PHP Developer - Poland",
+            "linkedin_page_content": "Applications for this vacancy have ended.",
+        },
+        "https://www.linkedin.com/jobs/view/2": {
+            "title": "Remote PHP Developer - United States",
+            "linkedin_page_content": "Remote within the United States only.",
+        },
+    }
+
+    assessments = services._assess_job_results(profile, results)
+
+    assert captured["model_kwargs"] == {
+        "model": "gpt-5-nano",
+        "reasoning_effort": "low",
+    }
+    assert not assessments["https://www.linkedin.com/jobs/view/1"].is_active
+    assert not assessments["https://www.linkedin.com/jobs/view/2"].location_matches
+    assert '"requested_location": "Poland"' in captured["messages"][1][1]
+    assert recorded_usage == [
+        {
+            "user_id": 2,
+            "operation": "job_validation",
+            "model": "gpt-5-nano",
+            "input_tokens": 1000,
+            "output_tokens": 100,
+            "cost_usd": 9e-05,
+        }
+    ]
+
+
+def test_search_excludes_ai_rejected_offers(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            assert api_key == "test-key"
+
+        def search(self, **_: object) -> dict:
+            return {
+                "results": [
+                    {
+                        "title": "PHP Developer - Closed Company",
+                        "url": "https://www.linkedin.com/jobs/view/3001",
+                        "content": "Applications for this vacancy have ended.",
+                        "raw_content": "Applications for this vacancy have ended.",
+                    },
+                    {
+                        "title": "Remote PHP Developer - United States",
+                        "url": "https://www.linkedin.com/jobs/view/3002",
+                        "content": "This remote role is available within the US.",
+                        "raw_content": "This remote role is available within the US.",
+                    },
+                ]
+            }
+
+    monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
+    monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
+    monkeypatch.setattr(
+        services,
+        "_resolve_linkedin_page",
+        lambda url: ("job", services._canonical_linkedin_job_url(url), "Apply"),
+    )
+    monkeypatch.setattr(
+        services,
+        "_assess_job_results",
+        lambda _profile, results_by_url: {
+            url: services.JobAssessment(
+                candidate_id=index,
+                is_active=index != 0,
+                location_matches=index != 1,
+                reason="Rejected by AI validation.",
+            )
+            for index, url in enumerate(results_by_url)
+        },
+    )
+
+    response = client.post("/api/users/2/search", json={"max_results": 10})
+
+    assert response.status_code == 200
+    assert response.json()["offers"] == []
+    assert "2 non-detail, inactive, location-mismatched" in response.json()["warning"]
+
+
+def test_empty_location_accepts_any_ai_location_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStructuredModel:
+        def invoke(self, _messages: list[tuple[str, str]]) -> dict:
+            return {
+                "parsed": services.JobAssessmentBatch(
+                    assessments=[
+                        services.JobAssessment(
+                            candidate_id=0,
+                            is_active=True,
+                            location_matches=False,
+                            reason="Model returned a restrictive location decision.",
+                        )
+                    ]
+                ),
+                "raw": SimpleNamespace(usage_metadata={}),
+            }
+
+    class FakeChatOpenAI:
+        def __init__(self, **_kwargs: object):
+            pass
+
+        def with_structured_output(
+            self, _schema: type, **_kwargs: object
+        ) -> FakeStructuredModel:
+            return FakeStructuredModel()
+
+    monkeypatch.setattr(services, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(services, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(services, "record_usage", lambda **_kwargs: None)
+    profile = db.get_profile(2)
+    assert profile is not None
+    profile.location = ""
+
+    assessments = services._assess_job_results(
+        profile,
+        {
+            "https://www.linkedin.com/jobs/view/1": {
+                "title": "Remote PHP Developer - United States",
+                "linkedin_page_content": "Remote within the United States only.",
+            }
+        },
+    )
+
+    assert assessments["https://www.linkedin.com/jobs/view/1"].location_matches
+
+
+def test_collections_fill_only_missing_slots_when_requested(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    accept_job_analysis: None,
 ) -> None:
     class FakeTavilyClient:
         def __init__(self, api_key: str):

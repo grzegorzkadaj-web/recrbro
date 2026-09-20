@@ -28,7 +28,7 @@ relational. The default database is created at `data/recrbro.db`.
 - [uv](https://docs.astral.sh/uv/)
 - Node.js 20.9 or newer
 - Tavily API key for live job searches
-- OpenAI API key for CopilotKit chat and AI CV extraction
+- OpenAI API key for CopilotKit chat, AI CV extraction, and job validation
 
 ## Configure
 
@@ -37,11 +37,14 @@ Copy `.env.example` to `.env` and set:
 ```dotenv
 TAVILY_API_KEY=tvly-...
 OPENAI_API_KEY=sk-...
+OPENAI_JOB_ANALYSIS_MODEL=gpt-5-nano
 ```
 
 Without `TAVILY_API_KEY`, search returns an explicit configuration error.
 Without `OPENAI_API_KEY`, the supplied CV can still be parsed using a visibly
-labelled local keyword fallback, but chat is unavailable.
+labelled local keyword fallback, but chat and job searches are unavailable.
+Job searches use the low-cost `gpt-5-nano` model by default to reject inactive
+offers and offers that do not allow working from the requested location.
 
 The sample CV is `data/cv/CV Grzegorz Kadaj en.pdf`.
 
