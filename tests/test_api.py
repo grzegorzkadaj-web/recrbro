@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -524,6 +525,64 @@ def test_ai_assesses_activity_and_requested_location(
             "cost_usd": 9e-05,
         }
     ]
+
+
+def test_ai_assessment_batches_candidates_and_retries_missing_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested_ids: list[list[int]] = []
+
+    class FakeStructuredModel:
+        def invoke(self, messages: list[tuple[str, str]]) -> dict:
+            payload = json.loads(messages[1][1])
+            candidate_ids = [
+                candidate["candidate_id"] for candidate in payload["candidates"]
+            ]
+            requested_ids.append(candidate_ids)
+            returned_ids = candidate_ids
+            if candidate_ids == [0, 1, 2, 3, 4]:
+                returned_ids = [0, 1, 2, 3]
+            return {
+                "parsed": services.JobAssessmentBatch(
+                    assessments=[
+                        services.JobAssessment(
+                            candidate_id=candidate_id,
+                            is_active=True,
+                            location_matches=True,
+                            reason="Offer is active.",
+                        )
+                        for candidate_id in returned_ids
+                    ]
+                ),
+                "raw": SimpleNamespace(usage_metadata={}),
+            }
+
+    class FakeChatOpenAI:
+        def __init__(self, **_kwargs: object):
+            pass
+
+        def with_structured_output(
+            self, _schema: type, **_kwargs: object
+        ) -> FakeStructuredModel:
+            return FakeStructuredModel()
+
+    monkeypatch.setattr(services, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(services, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(services, "record_usage", lambda **_kwargs: None)
+    profile = db.get_profile(2)
+    assert profile is not None
+    results = {
+        f"https://www.linkedin.com/jobs/view/{candidate_id}": {
+            "title": f"Job {candidate_id}",
+            "linkedin_page_content": "Applications are open.",
+        }
+        for candidate_id in range(7)
+    }
+
+    assessments = services._assess_job_results(profile, results)
+
+    assert requested_ids == [[0, 1, 2, 3, 4], [4], [5, 6]]
+    assert len(assessments) == 7
 
 
 def test_search_excludes_ai_rejected_offers(
