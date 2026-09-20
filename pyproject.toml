@@ -1,0 +1,19 @@
+[project]
+name = "recrbro"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Grzegorz Kadaj", email = "grzegorz.kadaj@rbo.pl" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "langchain>=1.4.2",
+]
+
+[project.scripts]
+recrbro = "recrbro:main"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
