@@ -87,9 +87,14 @@ supports Docker services, private networking, cron jobs, and a persistent
 volume for the single SQLite writer.
 
 1. Create an API service from this repository using the root `Dockerfile`.
+   Leave the Railway service root directory empty and use `Dockerfile` as the
+   Dockerfile path. Do not set the path to `/Dockerfile`.
    Attach a volume at `/data`, set `RECRBRO_DATABASE_PATH=/data/recrbro.db`, and
    configure the backend variables from `.env.example`.
-2. Create a web service from the `web` directory using `web/Dockerfile`. Set
+2. Create a web service with its Railway root directory set to `/web`. Use
+   `Dockerfile` as the Dockerfile path because paths are resolved relative to
+   the configured service root; do not use `web/Dockerfile` together with a
+   `/web` root directory. Set
    `NEXT_PUBLIC_API_URL` as a build variable and `BACKEND_URL` as a runtime
    variable to the API's public HTTPS URL.
 3. Set `FRONTEND_ORIGIN` on the API to the web service's exact HTTPS origin and
