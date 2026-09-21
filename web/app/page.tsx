@@ -484,7 +484,7 @@ function Dashboard({
           <div className="resultCount"><strong>{Math.min(maxResults, user.result_limit)}</strong><span>offers</span></div>
           <button className="primaryButton" onClick={runSearch} disabled={busy}>{busy ? "Working..." : "Search job sources"}<span>↗</span></button>
           <div className="planDetail"><span>Current plan</span><strong>{user.plan === "premium" ? "Premium" : "Free"}</strong><small>{user.plan === "premium" ? "Immediate results · up to 100 offers" : "Scheduled search · 5 offers · email delivery"}</small><small>{usage.available_credits.toFixed(2)} of {usage.credits_bought.toFixed(2)} purchased credits available</small></div>
-          <div className="upgradeBox"><strong>Buy credits · 50 PLN</strong><p>1 credit = $1. AI costs consume credits at 4× tracked provider cost. Verified payment restores Premium.</p><div><button onClick={() => upgrade("blik")} disabled={busy}>Pay with BLIK</button><button onClick={() => upgrade("przelewy24")} disabled={busy}>Przelewy24</button></div></div>
+          <div className="upgradeBox"><strong>Buy credits · 50 PLN</strong><p>1 credit = $1. Verified payment restores Premium.</p><div><button onClick={() => upgrade("blik")} disabled={busy}>Pay with BLIK</button><button onClick={() => upgrade("przelewy24")} disabled={busy}>Przelewy24</button></div></div>
         </aside>
       </section>
 
