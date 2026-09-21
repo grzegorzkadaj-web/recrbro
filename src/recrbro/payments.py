@@ -78,7 +78,7 @@ def create_checkout(user: User, method: str) -> CheckoutResponse:
         "sessionId": session_id,
         "amount": PREMIUM_PRICE_GROSZ,
         "currency": "PLN",
-        "description": "RecrBro Premium",
+        "description": "RecrBro AI credits",
         "email": user.email,
         "country": "PL",
         "language": "pl",

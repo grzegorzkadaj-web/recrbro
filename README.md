@@ -1,18 +1,26 @@
 # RecrBro
 
 RecrBro is an authenticated job-search assistant that builds a candidate
-profile, discovers live LinkedIn job pages through Tavily, rejects inactive or
-location-ineligible offers, and ranks the remaining roles against the
-candidate's requirements.
+profile, discovers live individual offers across job boards and employer sites
+through Tavily, rejects inactive or location-ineligible offers, and ranks the
+remaining roles against the candidate's requirements.
 
 ## Product behavior
 
 - Email/password accounts and Google OAuth sign-in.
-- Free accounts receive five results. Searches are queued, rate-limited, and
+- New accounts start on Premium with $1 of purchased AI credits. Free accounts
+  receive five results; searches are queued, rate-limited, and
   delivered by email when SMTP is configured.
-- Premium costs 50 PLN through Przelewy24/BLIK, runs searches immediately,
+- A verified 50 PLN Przelewy24/BLIK payment buys credits at the configured
+  `USD_TO_PLN` rate and restores Premium. Premium runs searches immediately,
   returns up to 100 offers, and enables AI-assisted PDF CV extraction.
-- Profiles include core and optional skills, languages, location, work mode,
+- Available credits equal purchased credits minus four times tracked AI cost,
+  rounded to two decimals. At zero, the backend switches the account to Free
+  until another payment is verified. Free searches retain deterministic
+  active-content checks and clearly label that AI eligibility validation was
+  skipped.
+- Profiles include core and optional skills, languages, location, exactly three
+  work-mode choices (remote, on-site, hybrid),
   minimum salary, contract type, and excluded companies.
 - AI usage and estimated USD cost are stored per account. Premium CV extraction
   switches to the lower-cost model after tracked spend reaches 25 PLN.
@@ -25,8 +33,9 @@ candidate's requirements.
   endpoint, security headers, and payment callback.
 - `src/recrbro/db.py`: SQLite schema, migrations, sessions, profiles, searches,
   offers, payments, and usage events.
-- `src/recrbro/services.py`: PDF extraction, AI analysis, Tavily discovery,
-  LinkedIn page verification, and deterministic ranking.
+- `src/recrbro/services.py`: PDF extraction, AI analysis, multi-source Tavily
+  discovery, source-aware URL validation, and deterministic ranking. LinkedIn
+  additionally receives authoritative direct-page validation.
 - `src/recrbro/payments.py`: Przelewy24 registration and verification.
 - `src/recrbro/notifications.py`: SMTP result delivery.
 - `src/recrbro/agent.py`: LangGraph agent exposed over AG-UI.

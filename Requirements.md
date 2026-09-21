@@ -1,5 +1,6 @@
 # Description
-This a requirements description for aplication which searches throught LinkedIn for job offers.
+This is a requirements description for an application that searches job boards
+and employer sites for individual job offers.
 # Problem statement
 Workers are wasting time on searching for a job offers that are not matched or not active.
 # Vision
@@ -36,7 +37,9 @@ Scenario:
 ## Search for job offers
 Preconditions:
 - User Profile should be prepared
-- in a case if rich model exceeds limit or User has a Free Plan then use cheapest AI model for all steps
+- when a user has available credits, use the configured low-cost validation
+  model; an exhausted Free account uses deterministic content checks without
+  incurring additional AI debt
 
 Scenario:
 - click Search - User
@@ -50,7 +53,7 @@ Scenario:
 - user should be able to update its profile manually
 - user should be able to load list of companies that are out of his interest
 - costs of tokens should be registered to have a current cost per user tracked
-- non-technical search criteria that are provided by user: area (like country or city), work type (remote, on-site, hybryd), salary required, agreement type (b2b contract, labor agreement)
+- non-technical search criteria that are provided by user: area (like country or city), work type (exactly remote, on-site, or hybrid), salary required, agreement type (b2b contract, labor agreement)
 - other search criteria should be taken by default from a user profile
 
 # Architecture
@@ -73,7 +76,10 @@ It should implement sorting strategy according to the following criteria: skills
 - results are sent on email
 - there should be a delay for executing next request (configurable parameter, 1h by default)
 ## Premium
-- fee is 50 PLN
+- new users start with Premium and $1 of purchased credits
+- available credits = purchased credits - (tracked AI cost in USD * 4), rounded to 2 decimals
+- 1 credit = $1; an exhausted balance switches the account to Free
+- a verified 50 PLN payment buys more credits and restores Premium
 - payment method is Przelewy24 and BLIK
 - results are presented on the screen
 - user gets up to 100 job offer
@@ -81,7 +87,7 @@ It should implement sorting strategy according to the following criteria: skills
 
 # Technical stack
 - Python
-- Tavily for LinkedIn searching
+- Tavily for multi-source job searching
 - LangChain - AI infrastructure
 - LangSmith - monitoring
 - CopilotKit framework
@@ -92,7 +98,9 @@ It should implement sorting strategy according to the following criteria: skills
 - authenticated email/password accounts and optional Google OAuth
 - optional seeded demo users for local development only
 - Premium users can upload a PDF CV for profile extraction
-- live LinkedIn job discovery is performed through Tavily
+- live multi-source job discovery is performed through Tavily
+- LinkedIn offers receive direct-page validation; other individual offer URLs
+  are canonicalized and validated from extracted source content
 - job offers are deduplicated and ranked by core skills, location, work mode, and contract type
 - CopilotKit provides an embedded assistant for refining search criteria
 - Free searches are queued, rate-limited, run by a protected scheduled worker,

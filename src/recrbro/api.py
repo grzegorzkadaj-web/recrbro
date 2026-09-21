@@ -73,7 +73,7 @@ from recrbro.services import (
     analyze_cv,
     build_search_query,
     profile_update_from_profile,
-    search_linkedin,
+    search_jobs,
 )
 
 security = HTTPBearer(auto_error=False)
@@ -89,7 +89,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="RecrBro API",
-    description="Authenticated candidate profiles and live LinkedIn job discovery.",
+    description="Authenticated candidate profiles and live multi-source job discovery.",
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -131,14 +131,17 @@ def _run_search(search_id: int) -> SearchJob:
         raise LookupError("Search not found.")
     user, profile, job = context
     try:
-        query, offers, warning = search_linkedin(
+        query, offers, warning = search_jobs(
             profile, min(job.requested_results, user.result_limit)
         )
         complete_search(search_id, offers, warning)
     except Exception as error:
         fail_search(search_id, str(error))
         raise
-    if user.plan == "free":
+    completed_user = next(
+        (candidate for candidate in list_users() if candidate.id == user.id), user
+    )
+    if completed_user.plan == "free":
         try:
             email_warning = send_search_results(user.email, offers)
         except Exception as error:
@@ -421,8 +424,6 @@ def usage(user: User = Depends(current_user)) -> UsageSummary:
 def checkout(
     payload: CheckoutRequest, user: User = Depends(current_user)
 ) -> CheckoutResponse:
-    if user.plan == "premium":
-        raise HTTPException(status_code=409, detail="The account is already Premium.")
     try:
         return create_checkout(user, payload.method)
     except RuntimeError as error:

@@ -338,6 +338,41 @@ label small {
   grid-column: 1 / -1;
 }
 
+.workModes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.workModes legend {
+  width: 100%;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.workModes label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #faf9f4;
+  text-transform: capitalize;
+}
+
+.workModes label span {
+  margin: 0;
+}
+
+.workModes input {
+  accent-color: var(--mint-dark);
+}
+
 input:not([type="range"]):not([type="file"]) {
   width: 100%;
   padding: 13px 14px;

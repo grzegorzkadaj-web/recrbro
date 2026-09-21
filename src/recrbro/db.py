@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
-from recrbro.config import DATABASE_PATH, SEED_DEMO_USERS
+from recrbro.config import DATABASE_PATH, SEED_DEMO_USERS, USD_TO_PLN
 from recrbro.models import (
     JobOffer,
     Profile,
@@ -58,6 +58,7 @@ def initialize_database() -> None:
                 plan TEXT NOT NULL CHECK (plan IN ('free', 'premium')),
                 result_limit INTEGER NOT NULL,
                 monthly_budget_pln REAL NOT NULL,
+                credits_bought_usd REAL NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
 
@@ -140,6 +141,20 @@ def initialize_database() -> None:
             database.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
         if "google_subject" not in user_columns:
             database.execute("ALTER TABLE users ADD COLUMN google_subject TEXT")
+        if "credits_bought_usd" not in user_columns:
+            database.execute(
+                "ALTER TABLE users ADD COLUMN credits_bought_usd REAL NOT NULL DEFAULT 0"
+            )
+            database.execute(
+                """
+                UPDATE users
+                SET credits_bought_usd = CASE
+                    WHEN plan = 'premium' THEN MAX(monthly_budget_pln / ?, 1)
+                    ELSE 0
+                END
+                """,
+                (USD_TO_PLN,),
+            )
         search_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(searches)")
         }
@@ -171,14 +186,23 @@ def initialize_database() -> None:
             )
         if SEED_DEMO_USERS:
             seed_users = [
-                (1, "Free demo", "free@recrbro.local", "free", 5, 0),
-                (2, "Premium demo", "premium@recrbro.local", "premium", 100, 50),
+                (1, "Free demo", "free@recrbro.local", "free", 5, 0, 0),
+                (
+                    2,
+                    "Premium demo",
+                    "premium@recrbro.local",
+                    "premium",
+                    100,
+                    50,
+                    50 / USD_TO_PLN,
+                ),
             ]
             database.executemany(
                 """
                 INSERT OR IGNORE INTO users
-                    (id, name, email, plan, result_limit, monthly_budget_pln, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (id, name, email, plan, result_limit, monthly_budget_pln,
+                     credits_bought_usd, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [(*user, _now()) for user in seed_users],
             )
@@ -218,10 +242,47 @@ def _profile_from_row(row: sqlite3.Row) -> Profile:
     return Profile.model_validate(values)
 
 
+def _reconcile_credit_state(
+    database: sqlite3.Connection, user_id: int | None = None
+) -> None:
+    parameters: tuple[object, ...] = ()
+    user_filter = ""
+    if user_id is not None:
+        user_filter = "AND users.id = ?"
+        parameters = (user_id,)
+    exhausted = database.execute(
+        f"""
+        SELECT users.id
+        FROM users
+        LEFT JOIN usage_events ON usage_events.user_id = users.id
+        GROUP BY users.id
+        HAVING users.plan = 'premium'
+           AND ROUND(
+               users.credits_bought_usd
+               - COALESCE(SUM(usage_events.cost_usd), 0) * 4,
+               2
+           ) <= 0
+           {user_filter}
+        """,
+        parameters,
+    ).fetchall()
+    if exhausted:
+        database.executemany(
+            "UPDATE users SET plan = 'free', result_limit = 5 WHERE id = ?",
+            [(row["id"],) for row in exhausted],
+        )
+
+
 def list_users() -> list[User]:
     with connection() as database:
+        _reconcile_credit_state(database)
         rows = database.execute("""
-            SELECT u.*, COALESCE(SUM(e.cost_usd), 0) AS tracked_cost_usd
+            SELECT u.*, COALESCE(SUM(e.cost_usd), 0) AS tracked_cost_usd,
+                   u.credits_bought_usd AS credits_bought,
+                   MAX(ROUND(
+                       u.credits_bought_usd - COALESCE(SUM(e.cost_usd), 0) * 4,
+                       2
+                   ), 0) AS available_credits
             FROM users u
             LEFT JOIN usage_events e ON e.user_id = u.id
             GROUP BY u.id
@@ -238,9 +299,15 @@ def get_user_by_email(
     email: str, include_password: bool = False
 ) -> User | tuple[User, str | None] | None:
     with connection() as database:
+        _reconcile_credit_state(database)
         row = database.execute(
             """
-            SELECT u.*, COALESCE(SUM(e.cost_usd), 0) AS tracked_cost_usd
+            SELECT u.*, COALESCE(SUM(e.cost_usd), 0) AS tracked_cost_usd,
+                   u.credits_bought_usd AS credits_bought,
+                   MAX(ROUND(
+                       u.credits_bought_usd - COALESCE(SUM(e.cost_usd), 0) * 4,
+                       2
+                   ), 0) AS available_credits
             FROM users u LEFT JOIN usage_events e ON e.user_id = u.id
             WHERE u.email = ? GROUP BY u.id
             """,
@@ -261,10 +328,10 @@ def create_user(name: str, email: str, password_hash: str | None = None) -> User
             """
             INSERT INTO users
                 (name, email, password_hash, plan, result_limit,
-                 monthly_budget_pln, created_at)
-            VALUES (?, ?, ?, 'free', 5, 0, ?)
+                 monthly_budget_pln, credits_bought_usd, created_at)
+            VALUES (?, ?, ?, 'premium', 100, ?, 1, ?)
             """,
-            (name, email, password_hash, _now()),
+            (name, email, password_hash, USD_TO_PLN, _now()),
         )
         user_id = int(cursor.lastrowid)
         _insert_default_profile(database, user_id)
@@ -288,10 +355,10 @@ def set_google_identity(subject: str, name: str, email: str) -> User:
             """
             INSERT INTO users
                 (name, email, google_subject, plan, result_limit,
-                 monthly_budget_pln, created_at)
-            VALUES (?, ?, ?, 'free', 5, 0, ?)
+                 monthly_budget_pln, credits_bought_usd, created_at)
+            VALUES (?, ?, ?, 'premium', 100, ?, 1, ?)
             """,
-            (name, email, subject, _now()),
+            (name, email, subject, USD_TO_PLN, _now()),
         )
         user_id = int(cursor.lastrowid)
         _insert_default_profile(database, user_id)
@@ -419,7 +486,7 @@ def complete_search(
                     offer.company,
                     str(offer.url),
                     offer.summary,
-                    offer.score,
+                    offer.score if offer.score is not None else 0,
                     json.dumps(offer.matched_skills),
                     json.dumps(offer.match_reasons),
                 )
@@ -561,6 +628,9 @@ def _search_from_row(database: sqlite3.Connection, row: sqlite3.Row) -> SearchJo
             JobOffer.model_validate(
                 {
                     **dict(offer),
+                    "score": (
+                        None if offer["result_type"] == "collection" else offer["score"]
+                    ),
                     "matched_skills": json.loads(offer["matched_skills"]),
                     "match_reasons": json.loads(offer["match_reasons"]),
                 }
@@ -617,10 +687,13 @@ def create_payment(
 def complete_payment(session_id: str, order_id: int) -> None:
     with connection() as database:
         row = database.execute(
-            "SELECT user_id FROM payments WHERE session_id = ?", (session_id,)
+            "SELECT user_id, amount_grosz, status FROM payments WHERE session_id = ?",
+            (session_id,),
         ).fetchone()
         if row is None:
             raise LookupError("Payment not found.")
+        if row["status"] == "complete":
+            return
         database.execute(
             """
             UPDATE payments
@@ -632,10 +705,17 @@ def complete_payment(session_id: str, order_id: int) -> None:
         database.execute(
             """
             UPDATE users
-            SET plan = 'premium', result_limit = 100, monthly_budget_pln = 50
+            SET plan = 'premium',
+                result_limit = 100,
+                monthly_budget_pln = monthly_budget_pln + ?,
+                credits_bought_usd = credits_bought_usd + ?
             WHERE id = ?
             """,
-            (row["user_id"],),
+            (
+                row["amount_grosz"] / 100,
+                round(row["amount_grosz"] / 100 / USD_TO_PLN, 2),
+                row["user_id"],
+            ),
         )
 
 
@@ -664,17 +744,44 @@ def record_usage(
             """,
             (user_id, operation, model, input_tokens, output_tokens, cost_usd, _now()),
         )
+        _reconcile_credit_state(database, user_id)
+
+
+def ensure_available_credit(user_id: int) -> None:
+    user = get_user(user_id)
+    if user is None:
+        raise LookupError("User not found.")
+    if user.available_credits <= 0:
+        with connection() as database:
+            database.execute(
+                "UPDATE users SET plan = 'free', result_limit = 5 WHERE id = ?",
+                (user_id,),
+            )
+        raise RuntimeError(
+            "Available AI credits are exhausted. Buy more credits to restore Premium."
+        )
 
 
 def usage_summary(user_id: int) -> UsageSummary:
     with connection() as database:
+        _reconcile_credit_state(database, user_id)
         row = database.execute(
             """
             SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
                    COALESCE(SUM(output_tokens), 0) AS output_tokens,
-                   COALESCE(SUM(cost_usd), 0) AS cost_usd
-            FROM usage_events WHERE user_id = ?
+                   COALESCE(SUM(cost_usd), 0) AS cost_usd,
+                   users.credits_bought_usd AS credits_bought,
+                   MAX(ROUND(
+                       users.credits_bought_usd - COALESCE(SUM(cost_usd), 0) * 4,
+                       2
+                   ), 0) AS available_credits
+            FROM users
+            LEFT JOIN usage_events ON usage_events.user_id = users.id
+            WHERE users.id = ?
+            GROUP BY users.id
             """,
             (user_id,),
         ).fetchone()
+    if row is None:
+        raise LookupError("User not found.")
     return UsageSummary.model_validate(dict(row))

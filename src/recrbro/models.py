@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 Plan = Literal["free", "premium"]
+WorkMode = Literal["remote", "on-site", "hybrid"]
 
 
 class User(BaseModel):
@@ -16,6 +17,8 @@ class User(BaseModel):
     result_limit: int
     monthly_budget_pln: float
     tracked_cost_usd: float
+    credits_bought: float
+    available_credits: float
 
 
 class AuthRequest(BaseModel):
@@ -38,11 +41,22 @@ class Profile(BaseModel):
     other_skills: list[str] = Field(default_factory=list)
     languages: list[str] = Field(default_factory=list)
     location: str = ""
-    work_modes: list[str] = Field(default_factory=list)
+    work_modes: list[WorkMode] = Field(default_factory=list)
     minimum_salary: int | None = None
     contract_types: list[str] = Field(default_factory=list)
     excluded_companies: list[str] = Field(default_factory=list)
     cv_filename: str | None = None
+
+    @field_validator("work_modes", mode="before")
+    @classmethod
+    def normalize_work_modes(cls, value: object) -> object:
+        if not isinstance(value, list):
+            return value
+        aliases = {"onsite": "on-site", "on site": "on-site"}
+        return [
+            aliases.get(str(mode).strip().casefold(), str(mode).strip().casefold())
+            for mode in value
+        ]
 
 
 class ProfileUpdate(BaseModel):
@@ -50,10 +64,21 @@ class ProfileUpdate(BaseModel):
     other_skills: list[str] = Field(default_factory=list)
     languages: list[str] = Field(default_factory=list)
     location: str = ""
-    work_modes: list[str] = Field(default_factory=list)
+    work_modes: list[WorkMode] = Field(default_factory=list)
     minimum_salary: int | None = Field(default=None, ge=0)
     contract_types: list[str] = Field(default_factory=list)
     excluded_companies: list[str] = Field(default_factory=list)
+
+    @field_validator("work_modes", mode="before")
+    @classmethod
+    def normalize_work_modes(cls, value: object) -> object:
+        if not isinstance(value, list):
+            return value
+        aliases = {"onsite": "on-site", "on site": "on-site"}
+        return [
+            aliases.get(str(mode).strip().casefold(), str(mode).strip().casefold())
+            for mode in value
+        ]
 
 
 class CvAnalysis(BaseModel):
@@ -73,7 +98,7 @@ class JobOffer(BaseModel):
     company: str
     url: HttpUrl
     summary: str
-    score: float
+    score: float | None
     matched_skills: list[str] = Field(default_factory=list)
     match_reasons: list[str] = Field(default_factory=list)
 
@@ -111,3 +136,5 @@ class UsageSummary(BaseModel):
     input_tokens: int
     output_tokens: int
     cost_usd: float
+    credits_bought: float
+    available_credits: float

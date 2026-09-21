@@ -61,9 +61,13 @@ strict TypeScript no-emit check rather than ESLint.
   AI CV extraction, and AI validation of offer activity and location eligibility.
   Missing keys must produce explicit errors or visibly labelled degraded
   behavior; never invent job data.
-- Keep plan enforcement in the backend. The Free plan has a five-result cap and
-  cannot upload CVs; its searches are queued and rate-limited. Premium can
-  request up to 100 immediate results.
+- Keep plan and credit enforcement in the backend. New users start Premium with
+  $1 purchased credit. Available credits are purchased credits minus four times
+  tracked AI USD cost, rounded to two decimals. At zero the account becomes
+  Free until a verified payment adds credits and restores Premium. Free has a
+  five-result cap, cannot upload CVs, and uses queued/rate-limited searches;
+  Premium can request up to 100 immediate results. Exhausted Free searches must
+  not incur more AI debt; use visibly labelled deterministic content checks.
 - Never restore user-ID selection as an authorization mechanism. Production
   user data is accessed only through the authenticated `/api/profile`,
   `/api/searches`, `/api/usage`, and payment endpoints.
@@ -75,6 +79,11 @@ strict TypeScript no-emit check rather than ESLint.
   typed arrays through the API.
 - Search ranking gives core-skill matches the dominant weight, then location,
   work mode, and contract type. Preserve this ordering when tuning scores.
+- Work mode is a typed array containing only `remote`, `on-site`, and `hybrid`.
+- Search all suitable Tavily sources, not only LinkedIn. Individual offer URLs
+  from employer sites and job boards are valid when their extracted content
+  passes active-offer and location checks. Canonicalize each source sensibly
+  and remove tracking parameters.
 - Search candidates must be checked against Tavily's extracted page content
   before persistence. Reject closed/expired markers such as "No longer
   accepting applications"; do not rely only on search-result snippets.
@@ -86,7 +95,7 @@ strict TypeScript no-emit check rather than ESLint.
   because Tavily snippets can omit LinkedIn's `closed-job` banner. Reject a
   result when the direct HTML contains a closed/expired marker even if Tavily's
   extracted content looks active.
-- Collection/search pages are opt-in fallback results only. Append them after
+- Collection/search pages are fallback results only. Append them after
   all verified individual jobs, set `result_type="collection"`, give them no
   match score, and label them clearly in the UI.
 - Use current CopilotKit v2 APIs from `@copilotkit/react-core/v2`; do not replace

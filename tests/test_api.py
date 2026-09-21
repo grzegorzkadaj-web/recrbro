@@ -88,7 +88,9 @@ def test_user_can_register_and_access_own_profile(client: TestClient) -> None:
 
     assert registration.status_code == 201
     payload = registration.json()
-    assert payload["user"]["plan"] == "free"
+    assert payload["user"]["plan"] == "premium"
+    assert payload["user"]["credits_bought"] == 1
+    assert payload["user"]["available_credits"] == 1
 
     response = client.get(
         "/api/profile",
@@ -110,6 +112,11 @@ def test_free_account_search_is_queued(client: TestClient) -> None:
         },
     ).json()
     headers = {"Authorization": f"Bearer {registration['token']}"}
+    with db.connection() as database:
+        database.execute(
+            "UPDATE users SET plan = 'free', result_limit = 5 WHERE id = ?",
+            (registration["user"]["id"],),
+        )
     client.put(
         "/api/profile",
         headers=headers,
@@ -171,7 +178,7 @@ def test_email_failure_does_not_discard_completed_search(
     )
     monkeypatch.setattr(
         api_module,
-        "search_linkedin",
+        "search_jobs",
         lambda _profile, _limit: ('"Python" Poland', [offer], None),
     )
     monkeypatch.setattr(
@@ -224,11 +231,11 @@ def test_search_query_uses_criteria_without_target_role(client: TestClient) -> N
         '"Python" Poland remote hybrid B2B employment hiring'
     )
     assert services.build_search_queries(profile, 100) == [
-        '"Python" jobs Poland remote hybrid B2B employment LinkedIn',
-        '"Python" developer jobs Poland remote hybrid B2B employment LinkedIn',
-        '"Python" engineer jobs Poland remote hybrid B2B employment LinkedIn',
-        '"Python" specialist jobs Poland remote hybrid B2B employment LinkedIn',
-        '"Python" Poland remote hybrid B2B employment LinkedIn hiring',
+        '"Python" jobs Poland remote hybrid B2B employment hiring apply',
+        '"Python" developer jobs Poland remote hybrid B2B employment hiring apply',
+        '"Python" engineer jobs Poland remote hybrid B2B employment hiring apply',
+        '"Python" specialist jobs Poland remote hybrid B2B employment hiring apply',
+        '"Python" Poland remote hybrid B2B employment job opening apply',
     ]
 
 
@@ -720,8 +727,8 @@ def test_search_merges_results_from_focused_queries(
     assert all(
         call["max_results"] == 10
         and call["search_depth"] == "advanced"
-        and call["include_domains"] == ["linkedin.com"]
-        and call["include_domains_mode"] == "restrict"
+        and "include_domains" not in call
+        and "include_domains_mode" not in call
         for call in search_calls
     )
 
@@ -743,6 +750,103 @@ def test_tavily_errors_return_service_unavailable(
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Tavily search failed: Invalid Tavily request."
+
+
+def test_search_accepts_verified_non_linkedin_job_pages(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    accept_job_analysis: None,
+) -> None:
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            assert api_key == "test-key"
+
+        def search(self, **kwargs: object) -> dict:
+            assert "include_domains" not in kwargs
+            return {
+                "results": [
+                    {
+                        "title": "Backend Engineer - Acme",
+                        "url": (
+                            "https://boards.greenhouse.io/acme/jobs/12345"
+                            "?utm_source=tavily"
+                        ),
+                        "content": "Python role in Poland.",
+                        "raw_content": "Apply for this active remote Python role in Poland.",
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
+    monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
+
+    response = client.post("/api/users/2/search", json={"max_results": 3})
+
+    assert response.status_code == 200
+    assert response.json()["offers"][0]["url"] == (
+        "https://boards.greenhouse.io/acme/jobs/12345"
+    )
+    assert response.json()["offers"][0]["company"] == "Acme"
+
+
+def test_work_modes_are_typed_and_normalize_onsite_alias(
+    client: TestClient,
+) -> None:
+    profile = {
+        "core_skills": ["Python"],
+        "other_skills": [],
+        "languages": [],
+        "location": "",
+        "work_modes": ["remote", "onsite", "hybrid"],
+        "minimum_salary": None,
+        "contract_types": [],
+        "excluded_companies": [],
+    }
+
+    response = client.put("/api/users/2/profile", json=profile)
+    invalid = client.put(
+        "/api/users/2/profile",
+        json={**profile, "work_modes": ["sometimes-office"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["work_modes"] == ["remote", "on-site", "hybrid"]
+    assert invalid.status_code == 422
+
+
+def test_credit_exhaustion_downgrades_and_payment_restores(
+    client: TestClient,
+) -> None:
+    registration = client.post(
+        "/api/auth/register",
+        json={
+            "name": "Credit Tester",
+            "email": "credits@example.com",
+            "password": "correct-horse-battery",
+        },
+    ).json()
+    user_id = registration["user"]["id"]
+    token = registration["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    db.record_usage(user_id, "test", "test-model", 1, 1, 0.25)
+
+    exhausted = client.get("/api/me", headers=headers).json()
+    usage = client.get("/api/usage", headers=headers).json()
+    assert exhausted["plan"] == "free"
+    assert exhausted["result_limit"] == 5
+    assert usage["available_credits"] == 0
+
+    payment_id = db.create_payment(user_id, "verified-session", 5000, "blik")
+    assert payment_id > 0
+    db.complete_payment("verified-session", 12345)
+    db.complete_payment("verified-session", 12345)
+
+    restored = client.get("/api/me", headers=headers).json()
+    assert restored["plan"] == "premium"
+    assert restored["result_limit"] == 100
+    assert restored["credits_bought"] == 13.5
+    assert restored["available_credits"] == 12.5
 
 
 def test_empty_location_accepts_any_ai_location_result(
@@ -857,6 +961,7 @@ def test_collection_pages_are_crawled_when_no_verified_jobs(
 
     assert response.status_code == 200
     offers = response.json()["offers"]
-    assert [offer["result_type"] for offer in offers] == ["job"]
+    assert [offer["result_type"] for offer in offers] == ["job", "collection"]
     assert offers[0]["url"] == "https://www.linkedin.com/jobs/view/4441830533"
     assert offers[0]["company"] == "Fallback Company"
+    assert offers[1]["score"] is None

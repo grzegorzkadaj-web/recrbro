@@ -10,6 +10,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { z } from "zod";
@@ -18,6 +19,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const SESSION_KEY = "recrbro_session";
 
 type Plan = "free" | "premium";
+type WorkMode = "remote" | "on-site" | "hybrid";
 type User = {
   id: number;
   name: string;
@@ -26,6 +28,8 @@ type User = {
   result_limit: number;
   monthly_budget_pln: number;
   tracked_cost_usd: number;
+  credits_bought: number;
+  available_credits: number;
 };
 type Profile = {
   user_id: number;
@@ -33,7 +37,7 @@ type Profile = {
   other_skills: string[];
   languages: string[];
   location: string;
-  work_modes: string[];
+  work_modes: WorkMode[];
   minimum_salary: number | null;
   contract_types: string[];
   excluded_companies: string[];
@@ -45,11 +49,17 @@ type JobOffer = {
   company: string;
   url: string;
   summary: string;
-  score: number;
+  score: number | null;
   matched_skills: string[];
   match_reasons: string[];
 };
-type Usage = { input_tokens: number; output_tokens: number; cost_usd: number };
+type Usage = {
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  credits_bought: number;
+  available_credits: number;
+};
 type SearchJob = {
   id: number;
   status: "queued" | "running" | "complete" | "failed";
@@ -149,7 +159,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
             shortlist instead of another endless job-board scroll.
           </p>
         </div>
-        <p className="authTrust">Live LinkedIn discovery. Active-offer checks. Your profile stays under your account.</p>
+        <p className="authTrust">Live multi-source discovery. Active-offer checks. Your profile stays under your account.</p>
       </section>
       <section className="authPanel">
         <div className="authCard">
@@ -163,7 +173,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
             <label><span>Password</span><input name="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required minLength={10} /></label>
             {error && <div className="notice compact" role="alert">{error}</div>}
             <button className="primaryButton" disabled={busy}>
-              {busy ? "Please wait..." : mode === "login" ? "Sign in" : "Create free account"}
+              {busy ? "Please wait..." : mode === "login" ? "Sign in" : "Create account with $1 credit"}
               <span>→</span>
             </button>
           </form>
@@ -191,7 +201,13 @@ function Dashboard({
 }) {
   const [user, setUser] = useState(initialUser);
   const [profile, setProfile] = useState<Profile>(emptyProfile);
-  const [usage, setUsage] = useState<Usage>({ input_tokens: 0, output_tokens: 0, cost_usd: 0 });
+  const [usage, setUsage] = useState<Usage>({
+    input_tokens: 0,
+    output_tokens: 0,
+    cost_usd: 0,
+    credits_bought: user.credits_bought,
+    available_credits: user.available_credits,
+  });
   const [offers, setOffers] = useState<JobOffer[]>([]);
   const [maxResults, setMaxResults] = useState(Math.min(10, user.result_limit));
   const [status, setStatus] = useState("Loading your profile...");
@@ -199,13 +215,24 @@ function Dashboard({
   const [busy, setBusy] = useState(true);
   const [searchJob, setSearchJob] = useState<SearchJob | null>(null);
   const [progressStep, setProgressStep] = useState(0);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  const resultsRef = useRef<HTMLElement>(null);
   const progressMessages = useMemo(() => [
     "Preparing focused search queries",
-    "Discovering LinkedIn job pages",
+    "Discovering job offers across the web",
     "Checking links and active status",
     "Validating location eligibility",
     "Ranking your strongest matches",
   ], []);
+
+  const scrollToOutcome = useCallback((hasError: boolean) => {
+    window.setTimeout(() => {
+      (hasError ? noticeRef.current : resultsRef.current)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 0);
+  }, []);
 
   const refreshAccount = useCallback(async () => {
     const [loadedUser, loadedProfile, loadedUsage] = await Promise.all([
@@ -245,17 +272,21 @@ function Dashboard({
           setWarning(latest.warning);
           setStatus(`Found ${latest.offers.length} ranked matches`);
           setBusy(false);
+          void refreshAccount().catch(() => undefined);
+          scrollToOutcome(Boolean(latest.error));
         } else if (latest.status === "failed") {
           setWarning(latest.error ?? "The scheduled search failed.");
           setStatus("Search failed");
           setBusy(false);
+          void refreshAccount().catch(() => undefined);
+          scrollToOutcome(true);
         }
       } catch (error) {
         setWarning(error instanceof Error ? error.message : "Could not refresh search.");
       }
     }, 10000);
     return () => window.clearInterval(timer);
-  }, [searchJob?.id, searchJob?.status, token]);
+  }, [refreshAccount, scrollToOutcome, searchJob?.id, searchJob?.status, token]);
 
   useAgentContext({
     description: "Current RecrBro account, profile, requested result count, and visible job matches.",
@@ -313,7 +344,7 @@ function Dashboard({
       setProfile(result.profile);
       setWarning(result.warning);
       setStatus(result.analysis_mode === "ai" ? "CV analyzed with AI" : "CV parsed locally");
-      setUsage(await api<Usage>("/api/usage", token));
+      await refreshAccount().catch(() => undefined);
     } catch (error) {
       setWarning(error instanceof Error ? error.message : "CV analysis failed.");
       setStatus("CV analysis failed");
@@ -350,6 +381,8 @@ function Dashboard({
         setWarning(job.warning);
         setStatus(`Found ${job.offers.length} ranked matches`);
         setBusy(false);
+        await refreshAccount().catch(() => undefined);
+        scrollToOutcome(false);
       } else {
         setStatus(`Queued for ${new Date(job.available_at).toLocaleString()}`);
       }
@@ -357,6 +390,8 @@ function Dashboard({
       setWarning(error instanceof Error ? error.message : "Search failed.");
       setStatus("Search failed");
       setBusy(false);
+      await refreshAccount().catch(() => undefined);
+      scrollToOutcome(true);
     }
   }
 
@@ -396,12 +431,12 @@ function Dashboard({
           <span className={busy ? "pulse" : "statusDot"} />
           <div>
             <strong>{busy && searchJob?.status !== "queued" ? progressMessages[progressStep] : status}</strong>
-            <small>{user.result_limit} results per search · ${usage.cost_usd.toFixed(4)} tracked AI cost</small>
+            <small>{user.result_limit} results per search · ${usage.available_credits.toFixed(2)} credits available</small>
           </div>
         </div>
       </section>
 
-      {warning && <div className="notice" role="alert"><strong>Heads up</strong><span>{warning}</span><button onClick={() => setWarning(null)} aria-label="Dismiss notice">×</button></div>}
+      {warning && <div className="notice" ref={noticeRef} role="alert"><strong>Heads up</strong><span>{warning}</span><button onClick={() => setWarning(null)} aria-label="Dismiss notice">×</button></div>}
 
       <section className="workspace">
         <article className="panel profilePanel">
@@ -413,7 +448,24 @@ function Dashboard({
             <label className="wide"><span>Core skills</span><input value={profile.core_skills.join(", ")} onChange={(e) => updateField("core_skills", splitList(e.target.value))} placeholder="Python, FastAPI, SQL" /><small>Required matches and the strongest ranking signal.</small></label>
             <label><span>Location</span><input value={profile.location} onChange={(e) => updateField("location", e.target.value)} placeholder="Poland" /></label>
             <label><span>Minimum monthly salary</span><input type="number" min="0" value={profile.minimum_salary ?? ""} onChange={(e) => updateField("minimum_salary", e.target.value ? Number(e.target.value) : null)} placeholder="18000" /></label>
-            <label><span>Work mode</span><input value={profile.work_modes.join(", ")} onChange={(e) => updateField("work_modes", splitList(e.target.value))} placeholder="remote, hybrid" /></label>
+            <fieldset className="workModes">
+              <legend>Work mode</legend>
+              {(["remote", "on-site", "hybrid"] as WorkMode[]).map((mode) => (
+                <label key={mode}>
+                  <input
+                    type="checkbox"
+                    checked={profile.work_modes.includes(mode)}
+                    onChange={(event) => updateField(
+                      "work_modes",
+                      event.target.checked
+                        ? [...profile.work_modes, mode]
+                        : profile.work_modes.filter((value) => value !== mode),
+                    )}
+                  />
+                  <span>{mode}</span>
+                </label>
+              ))}
+            </fieldset>
             <label><span>Contract type</span><input value={profile.contract_types.join(", ")} onChange={(e) => updateField("contract_types", splitList(e.target.value))} placeholder="B2B, employment" /></label>
             <label className="wide"><span>Languages</span><input value={profile.languages.join(", ")} onChange={(e) => updateField("languages", splitList(e.target.value))} placeholder="English, Polish" /></label>
             <label className="wide"><span>Other skills</span><input value={profile.other_skills.join(", ")} onChange={(e) => updateField("other_skills", splitList(e.target.value))} placeholder="Docker, Azure, mentoring" /></label>
@@ -430,24 +482,24 @@ function Dashboard({
           <p>Core skills shape discovery. Your remaining profile criteria refine ranking and eligibility.</p>
           <label><span>Maximum results</span><input type="range" min="1" max={user.result_limit} value={Math.min(maxResults, user.result_limit)} onChange={(e) => setMaxResults(Number(e.target.value))} /></label>
           <div className="resultCount"><strong>{Math.min(maxResults, user.result_limit)}</strong><span>offers</span></div>
-          <button className="primaryButton" onClick={runSearch} disabled={busy}>{busy ? "Working..." : "Search LinkedIn"}<span>↗</span></button>
-          <div className="planDetail"><span>Current plan</span><strong>{user.plan === "premium" ? "Premium" : "Free"}</strong><small>{user.plan === "premium" ? "Immediate results · up to 100 offers" : "Scheduled search · 5 offers · email delivery"}</small></div>
-          {user.plan === "free" && <div className="upgradeBox"><strong>Go Premium · 50 PLN</strong><p>Immediate searches, CV analysis, and up to 100 results.</p><div><button onClick={() => upgrade("blik")} disabled={busy}>Pay with BLIK</button><button onClick={() => upgrade("przelewy24")} disabled={busy}>Przelewy24</button></div></div>}
+          <button className="primaryButton" onClick={runSearch} disabled={busy}>{busy ? "Working..." : "Search job sources"}<span>↗</span></button>
+          <div className="planDetail"><span>Current plan</span><strong>{user.plan === "premium" ? "Premium" : "Free"}</strong><small>{user.plan === "premium" ? "Immediate results · up to 100 offers" : "Scheduled search · 5 offers · email delivery"}</small><small>{usage.available_credits.toFixed(2)} of {usage.credits_bought.toFixed(2)} purchased credits available</small></div>
+          <div className="upgradeBox"><strong>Buy credits · 50 PLN</strong><p>1 credit = $1. AI costs consume credits at 4× tracked provider cost. Verified payment restores Premium.</p><div><button onClick={() => upgrade("blik")} disabled={busy}>Pay with BLIK</button><button onClick={() => upgrade("przelewy24")} disabled={busy}>Przelewy24</button></div></div>
         </aside>
       </section>
 
-      <section className="resultsSection">
-        <div className="resultsHeading"><div><p className="sectionNumber">03</p><h2>Ranked opportunities</h2></div>{offers.length > 0 && <span>{offers.length} verified LinkedIn pages</span>}</div>
+      <section className="resultsSection" ref={resultsRef}>
+        <div className="resultsHeading"><div><p className="sectionNumber">03</p><h2>Ranked opportunities</h2></div>{offers.length > 0 && <span>{offers.length} verified results from job sources</span>}</div>
         {searchJob?.status === "queued" ? (
           <div className="emptyState queuedState"><span>◷</span><h3>Your search is in the queue</h3><p>It will run after {new Date(searchJob.available_at).toLocaleString()}. Keep this page open for updates, or check your email later.</p></div>
         ) : offers.length === 0 ? (
           <div className="emptyState"><span>◎</span><h3>Your shortlist starts here</h3><p>Save your profile and run a search to see ranked job offers.</p></div>
         ) : (
           <div className="offerList">{offers.map((offer, index) => (
-            <article className="offerCard" key={offer.url}>
+            <article className={`offerCard ${offer.result_type === "collection" ? "collectionCard" : ""}`} key={offer.url}>
               <div className="rank">{String(index + 1).padStart(2, "0")}</div>
-              <div className="offerBody"><div className="offerTitle"><div><p>{offer.company}</p><h3>{offer.title}</h3></div><div className="score"><strong>{Math.round(offer.score)}%</strong><span>match</span></div></div><p className="summary">{offer.summary}</p><div className="tags">{offer.match_reasons.map((reason) => <span key={reason}>{reason}</span>)}</div></div>
-              <a className="openOffer" href={offer.url} target="_blank" rel="noreferrer">Open offer <span>↗</span></a>
+              <div className="offerBody"><div className="offerTitle"><div><p>{offer.company}{offer.result_type === "collection" && <span className="collectionBadge">collection</span>}</p><h3>{offer.title}</h3></div>{offer.result_type === "job" && offer.score !== null ? <div className="score"><strong>{Math.round(offer.score)}%</strong><span>match</span></div> : <div className="collectionIcon">•••</div>}</div><p className="summary">{offer.summary}</p><div className="tags">{offer.match_reasons.map((reason) => <span key={reason}>{reason}</span>)}</div></div>
+              <a className="openOffer" href={offer.url} target="_blank" rel="noreferrer">{offer.result_type === "job" ? "Open offer" : "Browse jobs"} <span>↗</span></a>
             </article>
           ))}</div>
         )}
