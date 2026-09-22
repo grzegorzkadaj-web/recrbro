@@ -70,19 +70,20 @@ It should implement sorting strategy according to the following criteria: skills
 
 # Pricing
 ## Free
-- user gets 5 job offers
-- the cheapest model is used for processing a offers
+- new users start on Free
+- user can run two searches with up to 5 job offers each
+- user can upload a CV; local extraction is used when AI credits are unavailable
 - search requests are queued and run on schedule
 - results are sent on email
 - there should be a delay for executing next request (configurable parameter, 1h by default)
 ## Premium
-- new users start with Premium and $1 of purchased credits
-- available credits = purchased credits - (tracked AI cost in USD * 4), rounded to 2 decimals
-- 1 credit = $1; an exhausted balance switches the account to Free
-- a verified 50 PLN payment buys more credits and restores Premium
+- a 2 EUR purchase adds 4 credits and restores Premium
+- balance is tracked as append-only purchase, search, and AI usage events
+- AI USD cost is converted using the current EUR/USD rate and multiplied by
+  the configurable credit-cost multiplier (default 10)
 - payment method is Przelewy24 and BLIK
 - results are presented on the screen
-- user gets up to 100 job offer
+- user gets up to 10 job offers
 - when costs reach 50% of fee then ai model from Free plan should be used
 
 # Technical stack

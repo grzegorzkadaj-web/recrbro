@@ -23,6 +23,12 @@ OPENAI_OUTPUT_COST_PER_MILLION = float(
     os.getenv("OPENAI_OUTPUT_COST_PER_MILLION", "1.60")
 )
 USD_TO_PLN = float(os.getenv("USD_TO_PLN", "4.0"))
+CREDIT_COST_MULTIPLIER = float(os.getenv("CREDIT_COST_MULTIPLIER", "10"))
+SEARCH_CREDIT_COST = float(os.getenv("SEARCH_CREDIT_COST", "1"))
+CURRENCY_RATE_URL = os.getenv(
+    "CURRENCY_RATE_URL", "https://api.frankfurter.dev/v2/rate/EUR/USD"
+)
+CURRENCY_RATE_CACHE_MINUTES = int(os.getenv("CURRENCY_RATE_CACHE_MINUTES", "60"))
 
 
 def _normalized_origins(value: str) -> tuple[str, ...]:

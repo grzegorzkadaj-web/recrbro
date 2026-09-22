@@ -41,6 +41,7 @@ type Profile = {
   minimum_salary: number | null;
   contract_types: string[];
   excluded_companies: string[];
+  additional_limitations: string;
   cv_filename: string | null;
 };
 type JobOffer = {
@@ -69,6 +70,10 @@ type SearchJob = {
   error: string | null;
   available_at: string;
 };
+type SearchResults = {
+  current: SearchJob | null;
+  archival: JobOffer[];
+};
 
 const emptyProfile: Profile = {
   user_id: 0,
@@ -80,6 +85,7 @@ const emptyProfile: Profile = {
   minimum_salary: null,
   contract_types: [],
   excluded_companies: [],
+  additional_limitations: "",
   cv_filename: null,
 };
 
@@ -173,7 +179,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
             <label><span>Password</span><input name="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required minLength={10} /></label>
             {error && <div className="notice compact" role="alert">{error}</div>}
             <button className="primaryButton" disabled={busy}>
-              {busy ? "Please wait..." : mode === "login" ? "Sign in" : "Create account with $1 credit"}
+              {busy ? "Please wait..." : mode === "login" ? "Sign in" : "Create free account"}
               <span>→</span>
             </button>
           </form>
@@ -209,6 +215,7 @@ function Dashboard({
     available_credits: user.available_credits,
   });
   const [offers, setOffers] = useState<JobOffer[]>([]);
+  const [archivalOffers, setArchivalOffers] = useState<JobOffer[]>([]);
   const [maxResults, setMaxResults] = useState(Math.min(10, user.result_limit));
   const [status, setStatus] = useState("Loading your profile...");
   const [warning, setWarning] = useState<string | null>(null);
@@ -245,12 +252,19 @@ function Dashboard({
     setUsage(loadedUsage);
   }, [token]);
 
+  const refreshSearchResults = useCallback(async () => {
+    const results = await api<SearchResults>("/api/searches/results", token);
+    setSearchJob(results.current);
+    setOffers(results.current?.offers ?? []);
+    setArchivalOffers(results.archival);
+  }, [token]);
+
   useEffect(() => {
-    refreshAccount()
+    Promise.all([refreshAccount(), refreshSearchResults()])
       .then(() => setStatus("Profile ready"))
       .catch((error: Error) => setWarning(error.message))
       .finally(() => setBusy(false));
-  }, [refreshAccount]);
+  }, [refreshAccount, refreshSearchResults]);
 
   useEffect(() => {
     if (!busy || searchJob?.status === "queued") return;
@@ -268,7 +282,7 @@ function Dashboard({
         const latest = await api<SearchJob>(`/api/searches/${searchJob.id}`, token);
         setSearchJob(latest);
         if (latest.status === "complete") {
-          setOffers(latest.offers);
+          await refreshSearchResults();
           setWarning(latest.warning);
           setStatus(`Found ${latest.offers.length} ranked matches`);
           setBusy(false);
@@ -286,11 +300,11 @@ function Dashboard({
       }
     }, 10000);
     return () => window.clearInterval(timer);
-  }, [refreshAccount, scrollToOutcome, searchJob?.id, searchJob?.status, token]);
+  }, [refreshAccount, refreshSearchResults, scrollToOutcome, searchJob?.id, searchJob?.status, token]);
 
   useAgentContext({
     description: "Current RecrBro account, profile, requested result count, and visible job matches.",
-    value: { user, profile, requestedResults: maxResults, visibleOffers: offers },
+    value: { user, profile, requestedResults: maxResults, visibleOffers: offers, archivalOffers },
   });
 
   useFrontendTool({
@@ -356,6 +370,9 @@ function Dashboard({
 
   async function runSearch() {
     setBusy(true);
+    setArchivalOffers((current) => Array.from(
+      new Map([...offers, ...current].map((offer) => [offer.url, offer])).values(),
+    ));
     setOffers([]);
     setWarning(null);
     setProgressStep(0);
@@ -377,13 +394,14 @@ function Dashboard({
       });
       setSearchJob(job);
       if (job.status === "complete") {
-        setOffers(job.offers);
+        await refreshSearchResults();
         setWarning(job.warning);
         setStatus(`Found ${job.offers.length} ranked matches`);
         setBusy(false);
         await refreshAccount().catch(() => undefined);
         scrollToOutcome(false);
       } else {
+        await refreshSearchResults();
         setStatus(`Queued for ${new Date(job.available_at).toLocaleString()}`);
       }
     } catch (error) {
@@ -431,7 +449,7 @@ function Dashboard({
           <span className={busy ? "pulse" : "statusDot"} />
           <div>
             <strong>{busy && searchJob?.status !== "queued" ? progressMessages[progressStep] : status}</strong>
-            <small>{user.result_limit} results per search · ${usage.available_credits.toFixed(2)} credits available</small>
+            <small>{user.result_limit} results per search · {usage.available_credits.toFixed(2)} credits left</small>
           </div>
         </div>
       </section>
@@ -470,10 +488,11 @@ function Dashboard({
             <label className="wide"><span>Languages</span><input value={profile.languages.join(", ")} onChange={(e) => updateField("languages", splitList(e.target.value))} placeholder="English, Polish" /></label>
             <label className="wide"><span>Other skills</span><input value={profile.other_skills.join(", ")} onChange={(e) => updateField("other_skills", splitList(e.target.value))} placeholder="Docker, Azure, mentoring" /></label>
             <label className="wide"><span>Companies to exclude</span><input value={profile.excluded_companies.join(", ")} onChange={(e) => updateField("excluded_companies", splitList(e.target.value))} placeholder="Company A, Company B" /></label>
+            <label className="wide"><span>Additional limitations</span><textarea value={profile.additional_limitations} onChange={(e) => updateField("additional_limitations", e.target.value)} placeholder="I'm not interested in working in Asia. Find only jobs in Poland." /><small>High-priority instructions used while discovering and validating offers.</small></label>
           </div>
-          <div className={`cvCard ${user.plan !== "premium" ? "locked" : ""}`}>
+          <div className="cvCard">
             <div><strong>Build from a CV</strong><span>{profile.cv_filename ? `Using ${profile.cv_filename}` : "Upload a PDF to extract skills and languages."}</span></div>
-            <label className="uploadButton">{user.plan === "premium" ? "Choose PDF" : "Premium feature"}<input type="file" accept="application/pdf" disabled={busy || user.plan !== "premium"} onChange={uploadCv} /></label>
+            <label className="uploadButton">Choose PDF<input type="file" accept="application/pdf" disabled={busy} onChange={uploadCv} /></label>
           </div>
         </article>
 
@@ -483,19 +502,33 @@ function Dashboard({
           <label><span>Maximum results</span><input type="range" min="1" max={user.result_limit} value={Math.min(maxResults, user.result_limit)} onChange={(e) => setMaxResults(Number(e.target.value))} /></label>
           <div className="resultCount"><strong>{Math.min(maxResults, user.result_limit)}</strong><span>offers</span></div>
           <button className="primaryButton" onClick={runSearch} disabled={busy}>{busy ? "Working..." : "Search job sources"}<span>↗</span></button>
-          <div className="planDetail"><span>Current plan</span><strong>{user.plan === "premium" ? "Premium" : "Free"}</strong><small>{user.plan === "premium" ? "Immediate results · up to 100 offers" : "Scheduled search · 5 offers · email delivery"}</small><small>{usage.available_credits.toFixed(2)} of {usage.credits_bought.toFixed(2)} purchased credits available</small></div>
-          <div className="upgradeBox"><strong>Buy credits · 50 PLN</strong><p>1 credit = $1. Verified payment restores Premium.</p><div><button onClick={() => upgrade("blik")} disabled={busy}>Pay with BLIK</button><button onClick={() => upgrade("przelewy24")} disabled={busy}>Przelewy24</button></div></div>
+          <div className="planDetail"><span>Current plan</span><strong>{user.plan === "premium" ? "Premium" : "Free"}</strong><small>{user.plan === "premium" ? "Immediate results · up to 10 offers" : "Two scheduled searches · up to 5 offers each · CV upload included"}</small><small>{usage.available_credits.toFixed(2)} credits left</small></div>
+          <div className="upgradeBox"><strong>Buy 4 credits · 2 EUR</strong><p>Verified payment activates Premium. Search and AI usage are recorded in your balance history.</p><div><button onClick={() => upgrade("blik")} disabled={busy}>Pay with BLIK</button><button onClick={() => upgrade("przelewy24")} disabled={busy}>Przelewy24</button></div></div>
         </aside>
       </section>
 
       <section className="resultsSection" ref={resultsRef}>
-        <div className="resultsHeading"><div><p className="sectionNumber">03</p><h2>Ranked opportunities</h2></div>{offers.length > 0 && <span>{offers.length} verified results from job sources</span>}</div>
+        <div className="resultsHeading"><div><p className="sectionNumber">03</p><h2>Current results</h2></div>{offers.length > 0 && <span>{offers.length} verified results from job sources</span>}</div>
         {searchJob?.status === "queued" ? (
           <div className="emptyState queuedState"><span>◷</span><h3>Your search is in the queue</h3><p>It will run after {new Date(searchJob.available_at).toLocaleString()}. Keep this page open for updates, or check your email later.</p></div>
         ) : offers.length === 0 ? (
           <div className="emptyState"><span>◎</span><h3>Your shortlist starts here</h3><p>Save your profile and run a search to see ranked job offers.</p></div>
         ) : (
           <div className="offerList">{offers.map((offer, index) => (
+            <article className={`offerCard ${offer.result_type === "collection" ? "collectionCard" : ""}`} key={offer.url}>
+              <div className="rank">{String(index + 1).padStart(2, "0")}</div>
+              <div className="offerBody"><div className="offerTitle"><div><p>{offer.company}{offer.result_type === "collection" && <span className="collectionBadge">collection</span>}</p><h3>{offer.title}</h3></div>{offer.result_type === "job" && offer.score !== null ? <div className="score"><strong>{Math.round(offer.score)}%</strong><span>match</span></div> : <div className="collectionIcon">•••</div>}</div><p className="summary">{offer.summary}</p><div className="tags">{offer.match_reasons.map((reason) => <span key={reason}>{reason}</span>)}</div></div>
+              <a className="openOffer" href={offer.url} target="_blank" rel="noreferrer">{offer.result_type === "job" ? "Open offer" : "Browse jobs"} <span>↗</span></a>
+            </article>
+          ))}</div>
+        )}
+      </section>
+      <section className="resultsSection archivalSection">
+        <div className="resultsHeading"><div><p className="sectionNumber">04</p><h2>Archival results</h2></div>{archivalOffers.length > 0 && <span>{archivalOffers.length} unique offers from previous searches</span>}</div>
+        {archivalOffers.length === 0 ? (
+          <div className="emptyState"><span>↺</span><h3>No archived offers yet</h3><p>Your current results move here as soon as you start another search.</p></div>
+        ) : (
+          <div className="offerList">{archivalOffers.map((offer, index) => (
             <article className={`offerCard ${offer.result_type === "collection" ? "collectionCard" : ""}`} key={offer.url}>
               <div className="rank">{String(index + 1).padStart(2, "0")}</div>
               <div className="offerBody"><div className="offerTitle"><div><p>{offer.company}{offer.result_type === "collection" && <span className="collectionBadge">collection</span>}</p><h3>{offer.title}</h3></div>{offer.result_type === "job" && offer.score !== null ? <div className="score"><strong>{Math.round(offer.score)}%</strong><span>match</span></div> : <div className="collectionIcon">•••</div>}</div><p className="summary">{offer.summary}</p><div className="tags">{offer.match_reasons.map((reason) => <span key={reason}>{reason}</span>)}</div></div>

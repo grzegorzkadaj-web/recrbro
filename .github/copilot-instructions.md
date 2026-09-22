@@ -61,13 +61,13 @@ strict TypeScript no-emit check rather than ESLint.
   AI CV extraction, and AI validation of offer activity and location eligibility.
   Missing keys must produce explicit errors or visibly labelled degraded
   behavior; never invent job data.
-- Keep plan and credit enforcement in the backend. New users start Premium with
-  $1 purchased credit. Available credits are purchased credits minus four times
-  tracked AI USD cost, rounded to two decimals. At zero the account becomes
-  Free until a verified payment adds credits and restores Premium. Free has a
-  five-result cap, cannot upload CVs, and uses queued/rate-limited searches;
-  Premium can request up to 100 immediate results. Exhausted Free searches must
-  not incur more AI debt; use visibly labelled deterministic content checks.
+- Keep plan and credit enforcement in the backend. New users start Free and may
+  run two queued searches with up to five results each and upload CVs. A
+  verified 2 EUR payment adds four credits and restores Premium. Premium can
+  request up to ten immediate results. Credit balance comes from append-only
+  balance events; AI USD cost is converted with the current EUR/USD rate and
+  multiplied by `CREDIT_COST_MULTIPLIER` (default 10). Exhausted Free searches
+  must not incur AI debt; use visibly labelled deterministic content checks.
 - Never restore user-ID selection as an authorization mechanism. Production
   user data is accessed only through the authenticated `/api/profile`,
   `/api/searches`, `/api/usage`, and payment endpoints.

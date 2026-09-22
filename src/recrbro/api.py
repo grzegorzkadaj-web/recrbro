@@ -45,7 +45,9 @@ from recrbro.db import (
     fail_search,
     get_profile,
     get_search,
+    get_search_results,
     initialize_database,
+    list_balance_events,
     list_users,
     queue_free_search,
     search_owner_and_profile,
@@ -56,6 +58,7 @@ from recrbro.db import (
 from recrbro.models import (
     AuthRequest,
     AuthResponse,
+    BalanceEvent,
     CheckoutRequest,
     CheckoutResponse,
     CvAnalysis,
@@ -64,6 +67,7 @@ from recrbro.models import (
     RegisterRequest,
     SearchJob,
     SearchRequest,
+    SearchResults,
     UsageSummary,
     User,
 )
@@ -275,10 +279,6 @@ def save_profile(payload: ProfileUpdate, user: User = Depends(current_user)) -> 
 async def upload_cv(
     file: UploadFile = File(...), user: User = Depends(current_user)
 ) -> CvAnalysis:
-    if user.plan != "premium":
-        raise HTTPException(
-            status_code=403, detail="CV analysis is available only on the Premium plan."
-        )
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Upload a PDF file.")
     contents = await file.read()
@@ -313,10 +313,6 @@ async def development_upload_cv(
     )
     if user is None:
         raise HTTPException(status_code=404, detail="User not found.")
-    if user.plan != "premium":
-        raise HTTPException(
-            status_code=403, detail="CV analysis is available only on the Premium plan."
-        )
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Upload a PDF file.")
     contents = await file.read()
@@ -334,23 +330,26 @@ async def development_upload_cv(
 @app.post("/api/searches", response_model=SearchJob, status_code=202)
 def search(payload: SearchRequest, user: User = Depends(current_user)) -> SearchJob:
     profile = _profile_for(user)
-    limit = min(payload.max_results, user.result_limit)
+    limit = min(payload.max_results, user.result_limit, 10)
     if not profile.core_skills:
         raise HTTPException(
             status_code=422, detail="Add at least one core skill before searching."
         )
     query = build_search_query(profile)
     if user.plan == "free":
-        search_id = queue_free_search(
-            user.id,
-            query,
-            limit,
-            FREE_SEARCH_DELAY_MINUTES,
-            FREE_SEARCH_SCHEDULE_MINUTES,
-        )
-    else:
-        search_id = create_search(user.id, query, limit)
         try:
+            search_id = queue_free_search(
+                user.id,
+                query,
+                limit,
+                FREE_SEARCH_DELAY_MINUTES,
+                FREE_SEARCH_SCHEDULE_MINUTES,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+    else:
+        try:
+            search_id = create_search(user.id, query, limit)
             return _run_search(search_id)
         except RuntimeError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
@@ -376,14 +375,19 @@ def development_search(user_id: int, payload: SearchRequest) -> SearchJob:
     if user is None:
         raise HTTPException(status_code=404, detail="User not found.")
     profile = _profile_for(user)
-    limit = min(payload.max_results, user.result_limit)
+    limit = min(payload.max_results, user.result_limit, 10)
     if not profile.core_skills:
         raise HTTPException(status_code=422, detail="Add at least one core skill.")
-    search_id = create_search(user.id, build_search_query(profile), limit)
     try:
+        search_id = create_search(user.id, build_search_query(profile), limit)
         return _run_search(search_id)
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/searches/results", response_model=SearchResults)
+def search_results(user: User = Depends(current_user)) -> SearchResults:
+    return get_search_results(user.id)
 
 
 @app.get("/api/searches/{search_id}", response_model=SearchJob)
@@ -418,6 +422,11 @@ def secrets_compare(value: str | None, expected: str) -> bool:
 @app.get("/api/usage", response_model=UsageSummary)
 def usage(user: User = Depends(current_user)) -> UsageSummary:
     return usage_summary(user.id)
+
+
+@app.get("/api/balance-history", response_model=list[BalanceEvent])
+def balance_history(user: User = Depends(current_user)) -> list[BalanceEvent]:
+    return list_balance_events(user.id)
 
 
 @app.post("/api/payments/checkout", response_model=CheckoutResponse)

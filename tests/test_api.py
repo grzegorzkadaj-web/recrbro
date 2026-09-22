@@ -17,6 +17,7 @@ from recrbro.config import _normalized_origins
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(db, "eur_usd_rate", lambda: 1.25)
     with TestClient(app) as test_client:
         yield test_client
 
@@ -88,9 +89,9 @@ def test_user_can_register_and_access_own_profile(client: TestClient) -> None:
 
     assert registration.status_code == 201
     payload = registration.json()
-    assert payload["user"]["plan"] == "premium"
-    assert payload["user"]["credits_bought"] == 1
-    assert payload["user"]["available_credits"] == 1
+    assert payload["user"]["plan"] == "free"
+    assert payload["user"]["credits_bought"] == 0
+    assert payload["user"]["available_credits"] == 0
 
     response = client.get(
         "/api/profile",
@@ -135,7 +136,7 @@ def test_free_account_search_is_queued(client: TestClient) -> None:
     response = client.post(
         "/api/searches",
         headers=headers,
-        json={"max_results": 100},
+        json={"max_results": 10},
     )
 
     assert response.status_code == 202
@@ -155,6 +156,14 @@ def test_free_account_search_is_queued(client: TestClient) -> None:
         second.json()["available_at"].replace("Z", "+00:00")
     )
     assert second_time - first_time >= timedelta(minutes=60)
+
+    third = client.post(
+        "/api/searches",
+        headers=headers,
+        json={"max_results": 5},
+    )
+    assert third.status_code == 403
+    assert "two searches" in third.json()["detail"]
 
 
 def test_agent_requires_authentication(client: TestClient) -> None:
@@ -194,14 +203,32 @@ def test_email_failure_does_not_discard_completed_search(
     assert "Email delivery failed" in (result.warning or "")
 
 
-def test_free_user_cannot_upload_cv(client: TestClient) -> None:
+def test_free_user_can_upload_cv(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_analyze_cv(
+        user_id: int, filename: str, _contents: bytes, current: object
+    ) -> object:
+        return services.CvAnalysis(
+            profile=services.Profile(
+                **{
+                    **current.model_dump(),
+                    "user_id": user_id,
+                    "core_skills": ["Python"],
+                    "cv_filename": filename,
+                }
+            ),
+            analysis_mode="local-fallback",
+        )
+
+    monkeypatch.setattr(api_module, "analyze_cv", fake_analyze_cv)
     response = client.post(
         "/api/users/1/cv",
         files={"file": ("cv.pdf", b"%PDF-1.4", "application/pdf")},
     )
 
-    assert response.status_code == 403
-    assert "Premium" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json()["profile"]["core_skills"] == ["Python"]
 
 
 def test_profile_can_be_updated(client: TestClient) -> None:
@@ -214,6 +241,7 @@ def test_profile_can_be_updated(client: TestClient) -> None:
         "minimum_salary": 20000,
         "contract_types": ["B2B"],
         "excluded_companies": ["Example Corp"],
+        "additional_limitations": "Only roles based in Poland.",
     }
 
     response = client.put("/api/users/2/profile", json=payload)
@@ -221,6 +249,7 @@ def test_profile_can_be_updated(client: TestClient) -> None:
     assert response.status_code == 200
     assert "target_roles" not in response.json()
     assert response.json()["minimum_salary"] == 20000
+    assert response.json()["additional_limitations"] == "Only roles based in Poland."
 
 
 def test_search_query_uses_criteria_without_target_role(client: TestClient) -> None:
@@ -278,7 +307,7 @@ def test_free_search_is_limited_and_ranked(
     monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
     monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
 
-    response = client.post("/api/users/1/search", json={"max_results": 25})
+    response = client.post("/api/users/1/search", json={"max_results": 10})
 
     assert response.status_code == 200
     offers = response.json()["offers"]
@@ -502,6 +531,7 @@ def test_ai_assesses_activity_and_requested_location(
     )
     profile = db.get_profile(2)
     assert profile is not None
+    profile.additional_limitations = "Do not include jobs based in Asia."
     results = {
         "https://www.linkedin.com/jobs/view/1": {
             "title": "PHP Developer - Poland",
@@ -522,6 +552,10 @@ def test_ai_assesses_activity_and_requested_location(
     assert not assessments["https://www.linkedin.com/jobs/view/1"].is_active
     assert not assessments["https://www.linkedin.com/jobs/view/2"].location_matches
     assert '"requested_location": "Poland"' in captured["messages"][1][1]
+    assert (
+        '"candidate_limitations": "Do not include jobs based in Asia."'
+        in captured["messages"][1][1]
+    )
     assert recorded_usage == [
         {
             "user_id": 2,
@@ -837,16 +871,106 @@ def test_credit_exhaustion_downgrades_and_payment_restores(
     assert exhausted["result_limit"] == 5
     assert usage["available_credits"] == 0
 
-    payment_id = db.create_payment(user_id, "verified-session", 5000, "blik")
+    payment_id = db.create_payment(
+        user_id, "verified-session", 200, "blik", currency="EUR"
+    )
     assert payment_id > 0
     db.complete_payment("verified-session", 12345)
     db.complete_payment("verified-session", 12345)
 
     restored = client.get("/api/me", headers=headers).json()
     assert restored["plan"] == "premium"
-    assert restored["result_limit"] == 100
-    assert restored["credits_bought"] == 13.5
-    assert restored["available_credits"] == 12.5
+    assert restored["result_limit"] == 10
+    assert restored["credits_bought"] == 4
+    assert restored["available_credits"] == 2
+
+
+def test_balance_events_record_search_and_converted_ai_cost(
+    client: TestClient,
+) -> None:
+    before = db.usage_summary(2)
+    search_id = db.create_search(2, '"Python" Poland', requested_results=1)
+    after_search = db.usage_summary(2)
+
+    db.record_usage(2, "test", "test-model", 1, 1, 0.25)
+    after_usage = db.usage_summary(2)
+
+    assert search_id > 0
+    assert before.available_credits == 4
+    assert after_search.available_credits == 3
+    assert after_usage.available_credits == 1
+    with db.connection() as database:
+        events = database.execute("""
+            SELECT event_type, delta_credits, amount_usd, eur_usd_rate
+            FROM balance_events WHERE user_id = 2 ORDER BY id
+            """).fetchall()
+    assert [(event["event_type"], event["delta_credits"]) for event in events] == [
+        ("opening_credit", 4),
+        ("search", -1),
+        ("ai_usage", -2),
+    ]
+    assert events[-1]["amount_usd"] == 0.25
+    assert events[-1]["eur_usd_rate"] == 1.25
+    history = client.get(
+        "/api/balance-history",
+        headers={"Authorization": "Bearer invalid"},
+    )
+    assert history.status_code == 401
+
+
+def test_new_search_archives_previous_unique_offers(client: TestClient) -> None:
+    first_search = db.create_search(2, "first", requested_results=2)
+    first_offers = [
+        services.JobOffer(
+            title="Python Developer",
+            company="Example",
+            url="https://example.com/jobs/python",
+            summary="Python role.",
+            score=90,
+        ),
+        services.JobOffer(
+            title="Platform Engineer",
+            company="Archive Only",
+            url="https://example.com/jobs/platform",
+            summary="Platform role.",
+            score=80,
+        ),
+    ]
+    db.complete_search(first_search, first_offers)
+
+    second_search = db.create_search(2, "second", requested_results=2)
+    moved = db.get_search_results(2)
+    assert moved.current is not None
+    assert moved.current.id == second_search
+    assert moved.current.offers == []
+    assert {str(offer.url) for offer in moved.archival} == {
+        "https://example.com/jobs/python",
+        "https://example.com/jobs/platform",
+    }
+
+    db.complete_search(
+        second_search,
+        [
+            first_offers[0],
+            services.JobOffer(
+                title="Backend Engineer",
+                company="Current Only",
+                url="https://example.com/jobs/backend",
+                summary="Backend role.",
+                score=95,
+            ),
+        ],
+    )
+    results = db.get_search_results(2)
+    assert results.current is not None
+    current_urls = {str(offer.url) for offer in results.current.offers}
+    archival_urls = {str(offer.url) for offer in results.archival}
+    assert current_urls == {
+        "https://example.com/jobs/python",
+        "https://example.com/jobs/backend",
+    }
+    assert archival_urls == {"https://example.com/jobs/platform"}
+    assert current_urls.isdisjoint(archival_urls)
 
 
 def test_empty_location_accepts_any_ai_location_result(

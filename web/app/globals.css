@@ -373,7 +373,8 @@ label small {
   accent-color: var(--mint-dark);
 }
 
-input:not([type="range"]):not([type="file"]) {
+input:not([type="range"]):not([type="file"]),
+textarea {
   width: 100%;
   padding: 13px 14px;
   border: 1px solid var(--line);
@@ -384,7 +385,14 @@ input:not([type="range"]):not([type="file"]) {
   transition: border-color 150ms, box-shadow 150ms;
 }
 
-input:focus {
+textarea {
+  min-height: 110px;
+  resize: vertical;
+  font: inherit;
+}
+
+input:focus,
+textarea:focus {
   border-color: #59a984 !important;
   box-shadow: 0 0 0 3px rgba(89, 169, 132, 0.12);
 }
@@ -553,6 +561,10 @@ input:focus {
 
 .resultsSection {
   padding: 74px 0;
+}
+
+.archivalSection {
+  padding-top: 0;
 }
 
 .resultsHeading {

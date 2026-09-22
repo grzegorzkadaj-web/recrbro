@@ -45,6 +45,7 @@ class Profile(BaseModel):
     minimum_salary: int | None = None
     contract_types: list[str] = Field(default_factory=list)
     excluded_companies: list[str] = Field(default_factory=list)
+    additional_limitations: str = ""
     cv_filename: str | None = None
 
     @field_validator("work_modes", mode="before")
@@ -68,6 +69,7 @@ class ProfileUpdate(BaseModel):
     minimum_salary: int | None = Field(default=None, ge=0)
     contract_types: list[str] = Field(default_factory=list)
     excluded_companies: list[str] = Field(default_factory=list)
+    additional_limitations: str = Field(default="", max_length=4000)
 
     @field_validator("work_modes", mode="before")
     @classmethod
@@ -88,7 +90,7 @@ class CvAnalysis(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    max_results: int = Field(default=10, ge=1, le=100)
+    max_results: int = Field(default=10, ge=1, le=10)
 
 
 class JobOffer(BaseModel):
@@ -121,6 +123,20 @@ class SearchJob(BaseModel):
     available_at: datetime
     created_at: datetime
     completed_at: datetime | None = None
+
+
+class SearchResults(BaseModel):
+    current: SearchJob | None = None
+    archival: list[JobOffer] = Field(default_factory=list)
+
+
+class BalanceEvent(BaseModel):
+    id: int
+    event_type: str
+    delta_credits: float
+    amount_usd: float | None = None
+    eur_usd_rate: float | None = None
+    created_at: datetime
 
 
 class CheckoutRequest(BaseModel):

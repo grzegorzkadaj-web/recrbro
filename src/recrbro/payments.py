@@ -18,7 +18,7 @@ from recrbro.config import (
 from recrbro.db import complete_payment, create_payment, get_payment
 from recrbro.models import CheckoutResponse, User
 
-PREMIUM_PRICE_GROSZ = 5000
+PREMIUM_PRICE_CENTS = 200
 
 
 def _base_url() -> str:
@@ -67,8 +67,8 @@ def create_checkout(user: User, method: str) -> CheckoutResponse:
         {
             "sessionId": session_id,
             "merchantId": merchant_id,
-            "amount": PREMIUM_PRICE_GROSZ,
-            "currency": "PLN",
+            "amount": PREMIUM_PRICE_CENTS,
+            "currency": "EUR",
             "crc": crc,
         }
     )
@@ -76,8 +76,8 @@ def create_checkout(user: User, method: str) -> CheckoutResponse:
         "merchantId": merchant_id,
         "posId": pos_id,
         "sessionId": session_id,
-        "amount": PREMIUM_PRICE_GROSZ,
-        "currency": "PLN",
+        "amount": PREMIUM_PRICE_CENTS,
+        "currency": "EUR",
         "description": "RecrBro AI credits",
         "email": user.email,
         "country": "PL",
@@ -90,7 +90,9 @@ def create_checkout(user: User, method: str) -> CheckoutResponse:
     token = response.get("data", {}).get("token")
     if not token:
         raise RuntimeError("Przelewy24 did not return a checkout token.")
-    payment_id = create_payment(user.id, session_id, PREMIUM_PRICE_GROSZ, method)
+    payment_id = create_payment(
+        user.id, session_id, PREMIUM_PRICE_CENTS, method, currency="EUR"
+    )
     return CheckoutResponse(
         payment_id=payment_id,
         redirect_url=f"{_base_url()}/trnRequest/{token}",
@@ -106,7 +108,7 @@ def verify_status(payload: dict[str, object]) -> None:
     payment = get_payment(session_id)
     if payment is None:
         raise ValueError("Unknown Przelewy24 payment session.")
-    if amount != payment["amount_grosz"] or currency != "PLN":
+    if amount != payment["amount_grosz"] or currency != payment["currency"]:
         raise ValueError("Przelewy24 payment amount or currency does not match.")
     expected = _sign(
         {

@@ -8,24 +8,24 @@ remaining roles against the candidate's requirements.
 ## Product behavior
 
 - Email/password accounts and Google OAuth sign-in.
-- New accounts start on Premium with $1 of purchased AI credits. Free accounts
-  receive five results; searches are queued, rate-limited, and
-  delivered by email when SMTP is configured.
-- A verified 50 PLN Przelewy24/BLIK payment buys credits at the configured
-  `USD_TO_PLN` rate and restores Premium. Premium runs searches immediately,
-  returns up to 100 offers, and enables AI-assisted PDF CV extraction.
-- Available credits equal purchased credits minus four times tracked AI cost,
-  rounded to two decimals. At zero, the backend switches the account to Free
-  until another payment is verified. Free searches retain deterministic
-  active-content checks and clearly label that AI eligibility validation was
-  skipped.
+- New accounts start on Free. Free accounts can upload a PDF CV and run two
+  queued searches with up to five results each.
+- A verified 2 EUR Przelewy24/BLIK payment adds four credits and restores
+  Premium. Premium searches run immediately and return up to ten offers.
+- Credit balance is an append-only event stream containing purchases, search
+  charges, and AI usage charges. AI cost is converted from USD to EUR using the
+  free Frankfurter reference-rate API, then multiplied by the configurable
+  `CREDIT_COST_MULTIPLIER` (default `10`). At zero, the backend switches the
+  account to Free until another payment is verified. Authenticated clients can
+  read the ledger through `GET /api/balance-history`.
 - Profiles include core and optional skills, languages, location, exactly three
   work-mode choices (remote, on-site, hybrid),
-  minimum salary, contract type, and excluded companies.
+  minimum salary, contract type, excluded companies, and high-priority
+  free-text limitations.
 - AI usage and estimated USD cost are stored per account. Premium CV extraction
   switches to the lower-cost model after tracked spend reaches 25 PLN.
-- The dashboard shows live progress messages while a Premium search runs and a
-  scheduled time while a Free search is queued.
+- The dashboard separates the newest search from deduplicated archival offers.
+  Starting a new search moves the prior current results into the archive.
 
 ## Architecture
 

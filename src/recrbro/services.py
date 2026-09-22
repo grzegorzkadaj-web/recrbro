@@ -203,7 +203,8 @@ async def analyze_cv(
     warning = None
     mode = "local-fallback"
 
-    if OPENAI_API_KEY:
+    user = get_user(user_id)
+    if OPENAI_API_KEY and user is not None and user.plan == "premium":
         ensure_available_credit(user_id)
         tracked_cost_pln = usage_summary(user_id).cost_usd * USD_TO_PLN
         model_name = (
@@ -248,8 +249,12 @@ async def analyze_cv(
     else:
         extracted = _fallback_cv_profile(text)
         warning = (
-            "OPENAI_API_KEY is not configured. The CV was parsed with the local "
-            "keyword fallback instead of an AI model."
+            "Free-plan CV processing uses the local keyword extractor."
+            if user is not None and user.plan == "free" and OPENAI_API_KEY
+            else (
+                "OPENAI_API_KEY is not configured. The CV was parsed with the local "
+                "keyword fallback instead of an AI model."
+            )
         )
 
     profile = Profile(
@@ -262,6 +267,7 @@ async def analyze_cv(
         minimum_salary=current.minimum_salary,
         contract_types=current.contract_types,
         excluded_companies=current.excluded_companies,
+        additional_limitations=current.additional_limitations,
         cv_filename=filename,
     )
     return CvAnalysis(profile=profile, analysis_mode=mode, warning=warning)
@@ -274,6 +280,7 @@ def build_search_query(profile: Profile) -> str:
         " ".join(profile.work_modes),
         " ".join(profile.contract_types),
         f"{profile.minimum_salary} PLN" if profile.minimum_salary else "",
+        profile.additional_limitations,
         "hiring",
     ]
     return " ".join(part for part in parts if part).strip()
@@ -287,6 +294,7 @@ def build_search_queries(profile: Profile, limit: int) -> list[str]:
             " ".join(profile.work_modes),
             " ".join(profile.contract_types),
             f"{profile.minimum_salary} PLN" if profile.minimum_salary else "",
+            profile.additional_limitations.strip(),
         )
         if part
     )
@@ -680,6 +688,9 @@ def _assess_job_results(
         "explicitly limits work to an incompatible location. Treat unclear "
         "eligibility as a match so it can be ranked below explicit matches. "
         "If requested location is empty, always set location_matches=true. "
+        "Treat candidate_limitations as high-priority requirements. Reject a "
+        "candidate through location_matches when the offer explicitly conflicts "
+        "with those limitations, including excluded regions or required countries. "
         "Keep reason concise."
     )
     assessments_by_id: dict[int, JobAssessment] = {}
@@ -696,6 +707,9 @@ def _assess_job_results(
                         json.dumps(
                             {
                                 "requested_location": profile.location.strip(),
+                                "candidate_limitations": (
+                                    profile.additional_limitations.strip()
+                                ),
                                 "candidates": list(pending.values()),
                             },
                             ensure_ascii=False,
