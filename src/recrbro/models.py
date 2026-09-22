@@ -103,6 +103,7 @@ class JobOffer(BaseModel):
     score: float | None
     matched_skills: list[str] = Field(default_factory=list)
     match_reasons: list[str] = Field(default_factory=list)
+    applied: bool = False
 
 
 class SearchResponse(BaseModel):

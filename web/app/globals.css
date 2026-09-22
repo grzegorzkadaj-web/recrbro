@@ -630,6 +630,11 @@ textarea:focus {
   background: #eeeee8;
 }
 
+.offerCard.appliedCard {
+  border-color: #91b7a3;
+  background: #f0f7f2;
+}
+
 .rank {
   color: #97a4a1;
   font-family: Georgia, "Times New Roman", serif;
@@ -652,6 +657,18 @@ textarea:focus {
   border-radius: 6px;
   background: #d9ddd6;
   color: #546361;
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  vertical-align: middle;
+}
+
+.appliedBadge {
+  display: inline-block;
+  margin-left: 9px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: var(--mint-dark);
+  color: white;
   font-size: 9px;
   letter-spacing: 0.11em;
   vertical-align: middle;
@@ -729,6 +746,28 @@ textarea:focus {
 
 .openOffer:hover {
   color: var(--mint-dark);
+}
+
+.offerActions {
+  display: grid;
+  justify-items: end;
+  gap: 12px;
+}
+
+.appliedButton {
+  padding: 8px 12px;
+  border: 1px solid #91b7a3;
+  border-radius: 8px;
+  background: #eaf3ed;
+  color: #315c49;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.appliedButton:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 footer {
@@ -879,8 +918,9 @@ footer {
     grid-template-columns: 32px 1fr;
   }
 
-  .openOffer {
+  .offerActions {
     grid-column: 2;
+    justify-items: start;
   }
 
   .authShell {

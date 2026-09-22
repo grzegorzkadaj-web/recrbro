@@ -121,6 +121,13 @@ def initialize_database() -> None:
                 match_reasons TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS user_offer_statuses (
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                url TEXT NOT NULL,
+                applied_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, url)
+            );
+
             CREATE TABLE IF NOT EXISTS usage_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -587,23 +594,6 @@ def complete_search(
 ) -> None:
     with connection() as database:
         unique_offers = list({str(offer.url): offer for offer in offers}.values())
-        urls = [str(offer.url) for offer in unique_offers]
-        if urls:
-            placeholders = ",".join("?" for _ in urls)
-            database.execute(
-                f"""
-                DELETE FROM job_offers
-                WHERE search_id != ?
-                  AND search_id IN (
-                      SELECT id FROM searches
-                      WHERE user_id = (
-                          SELECT user_id FROM searches WHERE id = ?
-                      )
-                  )
-                  AND url IN ({placeholders})
-                """,
-                (search_id, search_id, *urls),
-            )
         database.executemany(
             """
             INSERT INTO job_offers
@@ -665,8 +655,16 @@ def append_search_warning(search_id: int, warning: str) -> None:
 
 def _search_from_row(database: sqlite3.Connection, row: sqlite3.Row) -> SearchJob:
     offers = database.execute(
-        "SELECT * FROM job_offers WHERE search_id = ? ORDER BY score DESC, id",
-        (row["id"],),
+        """
+        SELECT job_offers.*, user_offer_statuses.applied_at IS NOT NULL AS applied
+        FROM job_offers
+        LEFT JOIN user_offer_statuses
+          ON user_offer_statuses.user_id = ?
+         AND user_offer_statuses.url = job_offers.url
+        WHERE job_offers.search_id = ?
+        ORDER BY score DESC, id
+        """,
+        (row["user_id"], row["id"]),
     ).fetchall()
     return SearchJob(
         id=row["id"],
@@ -721,8 +719,7 @@ def get_search_results(user_id: int) -> SearchResults:
         if not rows:
             return SearchResults()
         current = _search_from_row(database, rows[0])
-        current_urls = {str(offer.url) for offer in current.offers}
-        seen = set(current_urls)
+        seen: set[str] = set()
         archival: list[JobOffer] = []
         for row in rows[1:]:
             if row["status"] != "complete":
@@ -734,6 +731,30 @@ def get_search_results(user_id: int) -> SearchResults:
                 seen.add(url)
                 archival.append(offer)
     return SearchResults(current=current, archival=archival)
+
+
+def mark_offer_applied(user_id: int, offer_id: int) -> bool:
+    with connection() as database:
+        offer = database.execute(
+            """
+            SELECT job_offers.url, job_offers.result_type
+            FROM job_offers
+            JOIN searches ON searches.id = job_offers.search_id
+            WHERE job_offers.id = ? AND searches.user_id = ?
+            """,
+            (offer_id, user_id),
+        ).fetchone()
+        if offer is None or offer["result_type"] != "job":
+            return False
+        database.execute(
+            """
+            INSERT INTO user_offer_statuses (user_id, url, applied_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id, url) DO UPDATE SET applied_at = excluded.applied_at
+            """,
+            (user_id, offer["url"], _now()),
+        )
+    return True
 
 
 def search_owner_and_profile(search_id: int) -> tuple[User, Profile, SearchJob] | None:

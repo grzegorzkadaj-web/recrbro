@@ -918,7 +918,7 @@ def test_balance_events_record_converted_ai_cost(
     assert history.status_code == 401
 
 
-def test_new_search_archives_previous_unique_offers(client: TestClient) -> None:
+def test_new_search_preserves_previous_offers_in_archive(client: TestClient) -> None:
     first_search = db.create_search(2, "first", requested_results=2)
     first_offers = [
         services.JobOffer(
@@ -969,8 +969,50 @@ def test_new_search_archives_previous_unique_offers(client: TestClient) -> None:
         "https://example.com/jobs/python",
         "https://example.com/jobs/backend",
     }
-    assert archival_urls == {"https://example.com/jobs/platform"}
-    assert current_urls.isdisjoint(archival_urls)
+    assert archival_urls == {
+        "https://example.com/jobs/python",
+        "https://example.com/jobs/platform",
+    }
+
+
+def test_user_can_mark_offer_applied_across_search_history(
+    client: TestClient,
+) -> None:
+    registration = client.post(
+        "/api/auth/register",
+        json={
+            "name": "Application Tracker",
+            "email": "applications@example.com",
+            "password": "correct-horse-battery",
+        },
+    ).json()
+    user_id = registration["user"]["id"]
+    headers = {"Authorization": f"Bearer {registration['token']}"}
+    offer = services.JobOffer(
+        title="Python Developer",
+        company="Example",
+        url="https://example.com/jobs/python",
+        summary="Python role.",
+        score=90,
+    )
+    first_search = db.create_search(user_id, "first")
+    db.complete_search(first_search, [offer])
+    second_search = db.create_search(user_id, "second")
+    db.complete_search(second_search, [offer])
+
+    results = client.get("/api/searches/results", headers=headers).json()
+    assert results["current"]["offers"][0]["applied"] is False
+    assert results["archival"][0]["applied"] is False
+
+    response = client.put(
+        f"/api/offers/{results['current']['offers'][0]['id']}/applied",
+        headers=headers,
+    )
+
+    assert response.status_code == 204
+    updated = client.get("/api/searches/results", headers=headers).json()
+    assert updated["current"]["offers"][0]["applied"] is True
+    assert updated["archival"][0]["applied"] is True
 
 
 def test_empty_location_accepts_any_ai_location_result(

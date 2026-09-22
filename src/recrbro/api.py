@@ -43,6 +43,7 @@ from recrbro.db import (
     initialize_database,
     list_balance_events,
     list_users,
+    mark_offer_applied,
     search_owner_and_profile,
     update_profile,
     usage_summary,
@@ -362,6 +363,12 @@ def development_search(user_id: int, payload: SearchRequest) -> SearchJob:
 @app.get("/api/searches/results", response_model=SearchResults)
 def search_results(user: User = Depends(current_user)) -> SearchResults:
     return get_search_results(user.id)
+
+
+@app.put("/api/offers/{offer_id}/applied", status_code=204)
+def offer_applied(offer_id: int, user: User = Depends(current_user)) -> None:
+    if not mark_offer_applied(user.id, offer_id):
+        raise HTTPException(status_code=404, detail="Job offer not found.")
 
 
 @app.get("/api/searches/{search_id}", response_model=SearchJob)
