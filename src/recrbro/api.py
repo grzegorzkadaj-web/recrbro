@@ -8,7 +8,6 @@ from fastapi import (
     Depends,
     FastAPI,
     File,
-    Header,
     HTTPException,
     UploadFile,
     status,
@@ -30,15 +29,10 @@ from recrbro.auth import (
 from recrbro.config import (
     APP_ENV,
     APP_SECRET,
-    FREE_SEARCH_DELAY_MINUTES,
-    FREE_SEARCH_SCHEDULE_MINUTES,
     FRONTEND_ORIGINS,
-    SEARCH_LEASE_MINUTES,
-    WORKER_SECRET,
 )
 from recrbro.db import (
     append_search_warning,
-    claim_due_searches,
     complete_search,
     create_search,
     delete_session,
@@ -49,7 +43,6 @@ from recrbro.db import (
     initialize_database,
     list_balance_events,
     list_users,
-    queue_free_search,
     search_owner_and_profile,
     update_profile,
     usage_summary,
@@ -335,30 +328,11 @@ def search(payload: SearchRequest, user: User = Depends(current_user)) -> Search
         raise HTTPException(
             status_code=422, detail="Add at least one core skill before searching."
         )
-    query = build_search_query(profile)
-    if user.plan == "free":
-        try:
-            search_id = queue_free_search(
-                user.id,
-                query,
-                limit,
-                FREE_SEARCH_DELAY_MINUTES,
-                FREE_SEARCH_SCHEDULE_MINUTES,
-            )
-        except ValueError as error:
-            raise HTTPException(status_code=403, detail=str(error)) from error
-    else:
-        try:
-            search_id = create_search(user.id, query, limit)
-            return _run_search(search_id)
-        except RuntimeError as error:
-            raise HTTPException(status_code=503, detail=str(error)) from error
-    queued = get_search(search_id, user.id)
-    if queued is None:
-        raise HTTPException(
-            status_code=500, detail="Queued search could not be loaded."
-        )
-    return queued
+    try:
+        search_id = create_search(user.id, build_search_query(profile), limit)
+        return _run_search(search_id)
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @app.post(
@@ -396,27 +370,6 @@ def search_status(search_id: int, user: User = Depends(current_user)) -> SearchJ
     if job is None:
         raise HTTPException(status_code=404, detail="Search not found.")
     return job
-
-
-@app.post("/api/internal/run-due-searches")
-def run_due_searches(
-    x_worker_secret: str | None = Header(default=None),
-) -> dict[str, int]:
-    if not WORKER_SECRET or not secrets_compare(x_worker_secret, WORKER_SECRET):
-        raise HTTPException(status_code=401, detail="Invalid worker secret.")
-    completed = 0
-    failed = 0
-    for search_id in claim_due_searches(SEARCH_LEASE_MINUTES):
-        try:
-            _run_search(search_id)
-            completed += 1
-        except Exception:
-            failed += 1
-    return {"completed": completed, "failed": failed}
-
-
-def secrets_compare(value: str | None, expected: str) -> bool:
-    return value is not None and secrets.compare_digest(value, expected)
 
 
 @app.get("/api/usage", response_model=UsageSummary)

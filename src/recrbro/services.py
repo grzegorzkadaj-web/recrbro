@@ -204,7 +204,7 @@ async def analyze_cv(
     mode = "local-fallback"
 
     user = get_user(user_id)
-    if OPENAI_API_KEY and user is not None and user.plan == "premium":
+    if OPENAI_API_KEY and user is not None and user.available_credits > 0:
         ensure_available_credit(user_id)
         tracked_cost_pln = usage_summary(user_id).cost_usd * USD_TO_PLN
         model_name = (
@@ -249,8 +249,8 @@ async def analyze_cv(
     else:
         extracted = _fallback_cv_profile(text)
         warning = (
-            "Free-plan CV processing uses the local keyword extractor."
-            if user is not None and user.plan == "free" and OPENAI_API_KEY
+            "AI credits are exhausted. The CV was parsed with the local keyword extractor."
+            if user is not None and user.available_credits <= 0 and OPENAI_API_KEY
             else (
                 "OPENAI_API_KEY is not configured. The CV was parsed with the local "
                 "keyword fallback instead of an AI model."
@@ -639,15 +639,15 @@ def _assess_job_results(
     if not results_by_url:
         return {}
     user = get_user(profile.user_id)
-    if user is not None and user.plan == "free":
+    if user is not None and user.available_credits <= 0:
         return {
             url: JobAssessment(
                 candidate_id=index,
                 is_active=True,
                 location_matches=True,
                 reason=(
-                    "Free-plan deterministic content validation; AI eligibility "
-                    "validation requires available credits."
+                    "Deterministic content validation; AI eligibility validation "
+                    "requires available credits."
                 ),
             )
             for index, url in enumerate(results_by_url)
@@ -873,7 +873,7 @@ def _build_job_offers(
             )
         )
         score, matched_skills, reasons = _rank_offer(title, content, profile)
-        if assessment.reason.startswith("Free-plan deterministic"):
+        if assessment.reason.startswith("Deterministic content validation"):
             reasons.append(assessment.reason)
         if result.get("direct_verification_failed"):
             counts["tavily_fallback"] += 1

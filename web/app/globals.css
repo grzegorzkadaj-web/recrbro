@@ -856,11 +856,6 @@ footer {
   gap: 14px;
 }
 
-.queuedState {
-  border-style: solid;
-  background: #eaf8f0;
-}
-
 @media (max-width: 850px) {
   main {
     width: min(100% - 24px, 680px);

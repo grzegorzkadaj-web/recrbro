@@ -50,9 +50,6 @@ FRONTEND_ORIGINS = _normalized_origins(
 FRONTEND_ORIGIN = FRONTEND_ORIGINS[0]
 PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "http://127.0.0.1:8000")
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "168"))
-FREE_SEARCH_DELAY_MINUTES = int(os.getenv("FREE_SEARCH_DELAY_MINUTES", "60"))
-FREE_SEARCH_SCHEDULE_MINUTES = int(os.getenv("FREE_SEARCH_SCHEDULE_MINUTES", "15"))
-SEARCH_LEASE_MINUTES = int(os.getenv("SEARCH_LEASE_MINUTES", "30"))
 SEED_DEMO_USERS = os.getenv("SEED_DEMO_USERS", "true").casefold() == "true"
 APP_ENV = os.getenv("APP_ENV", "development")
 APP_SECRET = os.getenv("APP_SECRET", "development-only-change-me")
@@ -67,7 +64,6 @@ SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_FROM = os.getenv("SMTP_FROM", "RecrBro <noreply@recrbro.app>")
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").casefold() == "true"
-WORKER_SECRET = os.getenv("WORKER_SECRET")
 P24_MERCHANT_ID = os.getenv("P24_MERCHANT_ID")
 P24_POS_ID = os.getenv("P24_POS_ID")
 P24_API_KEY = os.getenv("P24_API_KEY")

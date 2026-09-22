@@ -267,40 +267,13 @@ function Dashboard({
   }, [refreshAccount, refreshSearchResults]);
 
   useEffect(() => {
-    if (!busy || searchJob?.status === "queued") return;
+    if (!busy) return;
     const timer = window.setInterval(
       () => setProgressStep((step) => Math.min(step + 1, progressMessages.length - 1)),
       2600,
     );
     return () => window.clearInterval(timer);
-  }, [busy, progressMessages.length, searchJob?.status]);
-
-  useEffect(() => {
-    if (searchJob?.status !== "queued" && searchJob?.status !== "running") return;
-    const timer = window.setInterval(async () => {
-      try {
-        const latest = await api<SearchJob>(`/api/searches/${searchJob.id}`, token);
-        setSearchJob(latest);
-        if (latest.status === "complete") {
-          await refreshSearchResults();
-          setWarning(latest.warning);
-          setStatus(`Found ${latest.offers.length} ranked matches`);
-          setBusy(false);
-          void refreshAccount().catch(() => undefined);
-          scrollToOutcome(Boolean(latest.error));
-        } else if (latest.status === "failed") {
-          setWarning(latest.error ?? "The scheduled search failed.");
-          setStatus("Search failed");
-          setBusy(false);
-          void refreshAccount().catch(() => undefined);
-          scrollToOutcome(true);
-        }
-      } catch (error) {
-        setWarning(error instanceof Error ? error.message : "Could not refresh search.");
-      }
-    }, 10000);
-    return () => window.clearInterval(timer);
-  }, [refreshAccount, refreshSearchResults, scrollToOutcome, searchJob?.id, searchJob?.status, token]);
+  }, [busy, progressMessages.length]);
 
   useAgentContext({
     description: "Current RecrBro account, profile, requested result count, and visible job matches.",
@@ -393,17 +366,15 @@ function Dashboard({
         body: JSON.stringify({ max_results: maxResults }),
       });
       setSearchJob(job);
-      if (job.status === "complete") {
-        await refreshSearchResults();
-        setWarning(job.warning);
-        setStatus(`Found ${job.offers.length} ranked matches`);
-        setBusy(false);
-        await refreshAccount().catch(() => undefined);
-        scrollToOutcome(false);
-      } else {
-        await refreshSearchResults();
-        setStatus(`Queued for ${new Date(job.available_at).toLocaleString()}`);
+      if (job.status !== "complete") {
+        throw new Error(job.error ?? "Search did not complete.");
       }
+      await refreshSearchResults();
+      setWarning(job.warning);
+      setStatus(`Found ${job.offers.length} ranked matches`);
+      setBusy(false);
+      await refreshAccount().catch(() => undefined);
+      scrollToOutcome(false);
     } catch (error) {
       setWarning(error instanceof Error ? error.message : "Search failed.");
       setStatus("Search failed");
@@ -448,7 +419,7 @@ function Dashboard({
         <div className="statusCard" aria-live="polite">
           <span className={busy ? "pulse" : "statusDot"} />
           <div>
-            <strong>{busy && searchJob?.status !== "queued" ? progressMessages[progressStep] : status}</strong>
+            <strong>{busy ? progressMessages[progressStep] : status}</strong>
             <small>{user.result_limit} results per search · {usage.available_credits.toFixed(2)} credits left</small>
           </div>
         </div>
@@ -502,16 +473,14 @@ function Dashboard({
           <label><span>Maximum results</span><input type="range" min="1" max={user.result_limit} value={Math.min(maxResults, user.result_limit)} onChange={(e) => setMaxResults(Number(e.target.value))} /></label>
           <div className="resultCount"><strong>{Math.min(maxResults, user.result_limit)}</strong><span>offers</span></div>
           <button className="primaryButton" onClick={runSearch} disabled={busy}>{busy ? "Working..." : "Search job sources"}<span>↗</span></button>
-          <div className="planDetail"><span>Current plan</span><strong>{user.plan === "premium" ? "Premium" : "Free"}</strong><small>{user.plan === "premium" ? "Immediate results · up to 10 offers" : "Two scheduled searches · up to 5 offers each · CV upload included"}</small><small>{usage.available_credits.toFixed(2)} credits left</small></div>
+          <div className="planDetail"><span>Current plan</span><strong>{user.plan === "premium" ? "Premium" : "Free"}</strong><small>Immediate results · up to 10 offers · CV upload included</small><small>{usage.available_credits.toFixed(2)} credits left</small></div>
           <div className="upgradeBox"><strong>Buy 4 credits · 2 EUR</strong><p>Verified payment activates Premium. Actual AI usage is recorded in your balance history.</p><div><button onClick={() => upgrade("blik")} disabled={busy}>Pay with BLIK</button><button onClick={() => upgrade("przelewy24")} disabled={busy}>Przelewy24</button></div></div>
         </aside>
       </section>
 
       <section className="resultsSection" ref={resultsRef}>
         <div className="resultsHeading"><div><p className="sectionNumber">03</p><h2>Current results</h2></div>{offers.length > 0 && <span>{offers.length} verified results from job sources</span>}</div>
-        {searchJob?.status === "queued" ? (
-          <div className="emptyState queuedState"><span>◷</span><h3>Your search is in the queue</h3><p>It will run after {new Date(searchJob.available_at).toLocaleString()}. Keep this page open for updates, or check your email later.</p></div>
-        ) : offers.length === 0 ? (
+        {offers.length === 0 ? (
           <div className="emptyState"><span>◎</span><h3>Your shortlist starts here</h3><p>Save your profile and run a search to see ranked job offers.</p></div>
         ) : (
           <div className="offerList">{offers.map((offer, index) => (

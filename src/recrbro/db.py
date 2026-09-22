@@ -4,7 +4,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -33,6 +33,7 @@ LIST_FIELDS = {
     "contract_types",
     "excluded_companies",
 }
+FREE_STARTING_CREDITS = 0.1
 
 
 def _now() -> str:
@@ -96,7 +97,7 @@ def initialize_database() -> None:
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 query TEXT NOT NULL,
                 status TEXT NOT NULL,
-                requested_results INTEGER NOT NULL DEFAULT 5,
+                requested_results INTEGER NOT NULL DEFAULT 10,
                 available_at TEXT NOT NULL DEFAULT '',
                 claimed_at TEXT,
                 attempts INTEGER NOT NULL DEFAULT 0,
@@ -185,7 +186,7 @@ def initialize_database() -> None:
         for statement in (
             (
                 "requested_results",
-                "ALTER TABLE searches ADD COLUMN requested_results INTEGER NOT NULL DEFAULT 5",
+                "ALTER TABLE searches ADD COLUMN requested_results INTEGER NOT NULL DEFAULT 10",
             ),
             (
                 "available_at",
@@ -221,7 +222,7 @@ def initialize_database() -> None:
             )
         if SEED_DEMO_USERS:
             seed_users = [
-                (1, "Free demo", "free@recrbro.local", "free", 5, 0, 0),
+                (1, "Free demo", "free@recrbro.local", "free", 10, 0, 0),
                 (
                     2,
                     "Premium demo",
@@ -245,8 +246,8 @@ def initialize_database() -> None:
                 _insert_default_profile(database, user_id, seeded=True)
         database.execute("""
             UPDATE users
-            SET result_limit = CASE WHEN plan = 'premium' THEN 10 ELSE 5 END
-            WHERE result_limit != CASE WHEN plan = 'premium' THEN 10 ELSE 5 END
+            SET result_limit = 10
+            WHERE result_limit != 10
             """)
         _backfill_balance_events(database)
 
@@ -353,7 +354,7 @@ def _reconcile_credit_state(
     ).fetchall()
     if exhausted:
         database.executemany(
-            "UPDATE users SET plan = 'free', result_limit = 5 WHERE id = ?",
+            "UPDATE users SET plan = 'free', result_limit = 10 WHERE id = ?",
             [(row["id"],) for row in exhausted],
         )
 
@@ -366,7 +367,8 @@ def list_users() -> list[User]:
                    COALESCE((SELECT SUM(cost_usd) FROM usage_events
                              WHERE user_id = u.id), 0) AS tracked_cost_usd,
                    COALESCE((SELECT SUM(delta_credits) FROM balance_events
-                             WHERE user_id = u.id AND delta_credits > 0), 0)
+                             WHERE user_id = u.id
+                               AND event_type IN ('opening_credit', 'purchase')), 0)
                        AS credits_bought,
                    MAX(ROUND(COALESCE((SELECT SUM(delta_credits)
                                       FROM balance_events
@@ -393,7 +395,8 @@ def get_user_by_email(
                    COALESCE((SELECT SUM(cost_usd) FROM usage_events
                              WHERE user_id = u.id), 0) AS tracked_cost_usd,
                    COALESCE((SELECT SUM(delta_credits) FROM balance_events
-                             WHERE user_id = u.id AND delta_credits > 0), 0)
+                             WHERE user_id = u.id
+                               AND event_type IN ('opening_credit', 'purchase')), 0)
                        AS credits_bought,
                    MAX(ROUND(COALESCE((SELECT SUM(delta_credits)
                                       FROM balance_events
@@ -419,11 +422,18 @@ def create_user(name: str, email: str, password_hash: str | None = None) -> User
             INSERT INTO users
                 (name, email, password_hash, plan, result_limit,
                  monthly_budget_pln, credits_bought_usd, created_at)
-            VALUES (?, ?, ?, 'free', 5, 0, 0, ?)
+            VALUES (?, ?, ?, 'free', 10, 0, 0, ?)
             """,
             (name, email, password_hash, _now()),
         )
         user_id = int(cursor.lastrowid)
+        _record_balance_event(
+            database,
+            user_id,
+            "starter_credit",
+            FREE_STARTING_CREDITS,
+            f"starter-credit:{user_id}",
+        )
         _insert_default_profile(database, user_id)
     user = get_user(user_id)
     if user is None:
@@ -446,11 +456,18 @@ def set_google_identity(subject: str, name: str, email: str) -> User:
             INSERT INTO users
                 (name, email, google_subject, plan, result_limit,
                  monthly_budget_pln, credits_bought_usd, created_at)
-            VALUES (?, ?, ?, 'free', 5, 0, 0, ?)
+            VALUES (?, ?, ?, 'free', 10, 0, 0, ?)
             """,
             (name, email, subject, _now()),
         )
         user_id = int(cursor.lastrowid)
+        _record_balance_event(
+            database,
+            user_id,
+            "starter_credit",
+            FREE_STARTING_CREDITS,
+            f"starter-credit:{user_id}",
+        )
         _insert_default_profile(database, user_id)
     user = get_user(user_id)
     if user is None:
@@ -534,7 +551,7 @@ def update_profile(
 def create_search(
     user_id: int,
     query: str,
-    requested_results: int = 5,
+    requested_results: int = 10,
     status: str = "running",
     available_at: datetime | None = None,
 ) -> int:
@@ -644,97 +661,6 @@ def append_search_warning(search_id: int, warning: str) -> None:
             """,
             (warning, warning, search_id),
         )
-
-
-def queue_free_search(
-    user_id: int,
-    query: str,
-    requested_results: int,
-    delay_minutes: int,
-    schedule_minutes: int,
-) -> int:
-    now = datetime.now(timezone.utc)
-    with connection() as database:
-        database.execute("BEGIN IMMEDIATE")
-        search_count = database.execute(
-            """
-            SELECT COUNT(*) AS count FROM searches
-            WHERE user_id = ? AND plan_at_creation = 'free'
-            """,
-            (user_id,),
-        ).fetchone()["count"]
-        if search_count >= 2:
-            raise ValueError(
-                "The Free plan includes two searches. Buy credits to continue."
-            )
-        row = database.execute(
-            """
-            SELECT MAX(available_at) AS available_at
-            FROM searches WHERE user_id = ?
-            """,
-            (user_id,),
-        ).fetchone()
-        latest = (
-            datetime.fromisoformat(row["available_at"])
-            if row and row["available_at"]
-            else None
-        )
-        available_at = (
-            max(now, latest + timedelta(minutes=delay_minutes)) if latest else now
-        )
-        interval = max(1, schedule_minutes)
-        minute = ((available_at.minute // interval) + 1) * interval
-        available_at = available_at.replace(second=0, microsecond=0)
-        if minute >= 60:
-            available_at = available_at.replace(minute=0) + timedelta(hours=1)
-        else:
-            available_at = available_at.replace(minute=minute)
-        cursor = database.execute(
-            """
-            INSERT INTO searches
-                (user_id, query, status, requested_results, available_at,
-                 plan_at_creation, created_at)
-            VALUES (?, ?, 'queued', ?, ?, 'free', ?)
-            """,
-            (
-                user_id,
-                query,
-                requested_results,
-                available_at.isoformat(),
-                _now(),
-            ),
-        )
-        return int(cursor.lastrowid)
-
-
-def claim_due_searches(lease_minutes: int, limit: int = 5) -> list[int]:
-    now = datetime.now(timezone.utc)
-    stale_before = (now - timedelta(minutes=lease_minutes)).isoformat()
-    with connection() as database:
-        database.execute("BEGIN IMMEDIATE")
-        rows = database.execute(
-            """
-            SELECT id FROM searches
-            WHERE (status = 'queued' AND available_at <= ?)
-               OR (
-                   status = 'running'
-                   AND (claimed_at IS NULL OR claimed_at <= ?)
-               )
-            ORDER BY available_at, id LIMIT ?
-            """,
-            (now.isoformat(), stale_before, limit),
-        ).fetchall()
-        ids = [int(row["id"]) for row in rows]
-        if ids:
-            database.executemany(
-                """
-                UPDATE searches
-                SET status = 'running', claimed_at = ?, attempts = attempts + 1
-                WHERE id = ?
-                """,
-                [(now.isoformat(), search_id) for search_id in ids],
-            )
-    return ids
 
 
 def _search_from_row(database: sqlite3.Connection, row: sqlite3.Row) -> SearchJob:
@@ -935,7 +861,7 @@ def ensure_available_credit(user_id: int) -> None:
     if user.available_credits <= 0:
         with connection() as database:
             database.execute(
-                "UPDATE users SET plan = 'free', result_limit = 5 WHERE id = ?",
+                "UPDATE users SET plan = 'free', result_limit = 10 WHERE id = ?",
                 (user_id,),
             )
         raise RuntimeError(
@@ -955,7 +881,8 @@ def usage_summary(user_id: int) -> UsageSummary:
                    COALESCE((SELECT SUM(cost_usd) FROM usage_events
                              WHERE user_id = users.id), 0) AS cost_usd,
                    COALESCE((SELECT SUM(delta_credits) FROM balance_events
-                             WHERE user_id = users.id AND delta_credits > 0), 0)
+                             WHERE user_id = users.id
+                               AND event_type IN ('opening_credit', 'purchase')), 0)
                        AS credits_bought,
                    MAX(ROUND(COALESCE((SELECT SUM(delta_credits)
                                       FROM balance_events

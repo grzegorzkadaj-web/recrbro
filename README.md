@@ -8,10 +8,10 @@ remaining roles against the candidate's requirements.
 ## Product behavior
 
 - Email/password accounts and Google OAuth sign-in.
-- New accounts start on Free. Free accounts can upload a PDF CV and run two
-  queued searches with up to five results each.
+- New accounts start on Free with 0.1 credit. Free accounts can upload a PDF CV
+  and run immediate searches with up to ten results each.
 - A verified 2 EUR Przelewy24/BLIK payment adds four credits and restores
-  Premium. Premium searches run immediately and return up to ten offers.
+  Premium.
 - Credit balance is an append-only event stream containing purchases and actual
   AI usage charges. AI cost is converted from USD to EUR using the free
   Frankfurter reference-rate API, then multiplied by the configurable
@@ -22,15 +22,15 @@ remaining roles against the candidate's requirements.
   work-mode choices (remote, on-site, hybrid),
   minimum salary, contract type, excluded companies, and high-priority
   free-text limitations.
-- AI usage and estimated USD cost are stored per account. Premium CV extraction
+- AI usage and estimated USD cost are stored per account. AI CV extraction
   switches to the lower-cost model after tracked spend reaches 25 PLN.
 - The dashboard separates the newest search from deduplicated archival offers.
   Starting a new search moves the prior current results into the archive.
 
 ## Architecture
 
-- `src/recrbro/api.py`: FastAPI REST API, account boundary, search queue, worker
-  endpoint, security headers, and payment callback.
+- `src/recrbro/api.py`: FastAPI REST API, account boundary, live search
+  execution, security headers, and payment callback.
 - `src/recrbro/db.py`: SQLite schema, migrations, sessions, profiles, searches,
   offers, payments, and usage events.
 - `src/recrbro/services.py`: PDF extraction, AI analysis, multi-source Tavily
@@ -74,8 +74,8 @@ local development.
 
 ## Required production configuration
 
-Generate strong independent values for `APP_SECRET` and `WORKER_SECRET`. Set
-`APP_ENV=production`, `SEED_DEMO_USERS=false`, the public frontend/API URLs,
+Generate a strong value for `APP_SECRET`. Set `APP_ENV=production`,
+`SEED_DEMO_USERS=false`, the public frontend/API URLs,
 `RECRBRO_DATABASE_PATH=/data/recrbro.db`, and all provider credentials listed
 in `.env.example`.
 
@@ -92,7 +92,7 @@ LangSmith tracing uses the standard `LANGSMITH_*` variables.
 ## Railway deployment
 
 [Railway](https://docs.railway.com/) is the recommended initial host because it
-supports Docker services, private networking, cron jobs, and a persistent
+supports Docker services, private networking, and a persistent
 volume for the single SQLite writer.
 
 1. Create an API service from this repository using the root `Dockerfile`.
@@ -111,17 +111,9 @@ volume for the single SQLite writer.
    `PUBLIC_API_URL` to the API's exact HTTPS origin. Multiple allowed web
    origins can be comma-separated; the first is used for OAuth and payment
    redirects. The legacy singular `FRONTEND_ORIGIN` remains supported.
-4. Add a Railway cron service that runs every 15 minutes and invokes:
-
-   ```sh
-   curl --fail-with-body --request POST \
-     --header "X-Worker-Secret: $WORKER_SECRET" \
-     "$PUBLIC_API_URL/api/internal/run-due-searches"
-   ```
-
-5. Map custom domains, update the Google and Przelewy24 callback URLs, run a
+4. Map custom domains, update the Google and Przelewy24 callback URLs, run a
    sandbox payment, and verify `/health` before enabling production payments.
-6. Back up `/data/recrbro.db` regularly. Railway volumes are persistent, but
+5. Back up `/data/recrbro.db` regularly. Railway volumes are persistent, but
    application-level backup and restore drills remain your responsibility.
 
 Railway volume guidance:

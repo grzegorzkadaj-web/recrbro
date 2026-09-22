@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -90,8 +89,9 @@ def test_user_can_register_and_access_own_profile(client: TestClient) -> None:
     assert registration.status_code == 201
     payload = registration.json()
     assert payload["user"]["plan"] == "free"
+    assert payload["user"]["result_limit"] == 10
     assert payload["user"]["credits_bought"] == 0
-    assert payload["user"]["available_credits"] == 0
+    assert payload["user"]["available_credits"] == 0.1
 
     response = client.get(
         "/api/profile",
@@ -101,9 +101,18 @@ def test_user_can_register_and_access_own_profile(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.json()["user_id"] == payload["user"]["id"]
     assert response.json()["core_skills"] == []
+    history = client.get(
+        "/api/balance-history",
+        headers={"Authorization": "Bear" + "er " + payload["token"]},
+    )
+    assert history.status_code == 200
+    assert history.json()[0]["event_type"] == "starter_credit"
+    assert history.json()[0]["delta_credits"] == 0.1
 
 
-def test_free_account_search_is_queued(client: TestClient) -> None:
+def test_free_account_search_runs_immediately(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     registration = client.post(
         "/api/auth/register",
         json={
@@ -113,11 +122,6 @@ def test_free_account_search_is_queued(client: TestClient) -> None:
         },
     ).json()
     headers = {"Authorization": f"Bearer {registration['token']}"}
-    with db.connection() as database:
-        database.execute(
-            "UPDATE users SET plan = 'free', result_limit = 5 WHERE id = ?",
-            (registration["user"]["id"],),
-        )
     client.put(
         "/api/profile",
         headers=headers,
@@ -132,6 +136,24 @@ def test_free_account_search_is_queued(client: TestClient) -> None:
             "excluded_companies": [],
         },
     )
+    monkeypatch.setattr(
+        api_module,
+        "search_jobs",
+        lambda _profile, limit: (
+            '"Python" Poland',
+            [
+                services.JobOffer(
+                    title=f"Python Developer {index}",
+                    company="Example",
+                    url=f"https://example.com/jobs/{index}",
+                    summary="Active Python role.",
+                    score=90,
+                )
+                for index in range(limit)
+            ],
+            None,
+        ),
+    )
 
     response = client.post(
         "/api/searches",
@@ -140,30 +162,9 @@ def test_free_account_search_is_queued(client: TestClient) -> None:
     )
 
     assert response.status_code == 202
-    assert response.json()["status"] == "queued"
-    assert response.json()["requested_results"] == 5
-
-    second = client.post(
-        "/api/searches",
-        headers=headers,
-        json={"max_results": 5},
-    )
-
-    first_time = datetime.fromisoformat(
-        response.json()["available_at"].replace("Z", "+00:00")
-    )
-    second_time = datetime.fromisoformat(
-        second.json()["available_at"].replace("Z", "+00:00")
-    )
-    assert second_time - first_time >= timedelta(minutes=60)
-
-    third = client.post(
-        "/api/searches",
-        headers=headers,
-        json={"max_results": 5},
-    )
-    assert third.status_code == 403
-    assert "two searches" in third.json()["detail"]
+    assert response.json()["status"] == "complete"
+    assert response.json()["requested_results"] == 10
+    assert len(response.json()["offers"]) == 10
 
 
 def test_agent_requires_authentication(client: TestClient) -> None:
@@ -268,7 +269,7 @@ def test_search_query_uses_criteria_without_target_role(client: TestClient) -> N
     ]
 
 
-def test_free_search_is_limited_and_ranked(
+def test_free_search_supports_ten_ranked_results(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
     accept_job_analysis: None,
@@ -311,7 +312,7 @@ def test_free_search_is_limited_and_ranked(
 
     assert response.status_code == 200
     offers = response.json()["offers"]
-    assert len(offers) == 5
+    assert len(offers) == 9
     assert offers[0]["score"] > 0
     assert "Python" in offers[0]["matched_skills"]
     assert all(not offer["url"].endswith("/0") for offer in offers)
@@ -863,12 +864,12 @@ def test_credit_exhaustion_downgrades_and_payment_restores(
     token = registration["token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    db.record_usage(user_id, "test", "test-model", 1, 1, 0.25)
+    db.record_usage(user_id, "test", "test-model", 1, 1, 0.0125)
 
     exhausted = client.get("/api/me", headers=headers).json()
     usage = client.get("/api/usage", headers=headers).json()
     assert exhausted["plan"] == "free"
-    assert exhausted["result_limit"] == 5
+    assert exhausted["result_limit"] == 10
     assert usage["available_credits"] == 0
 
     payment_id = db.create_payment(
@@ -882,7 +883,7 @@ def test_credit_exhaustion_downgrades_and_payment_restores(
     assert restored["plan"] == "premium"
     assert restored["result_limit"] == 10
     assert restored["credits_bought"] == 4
-    assert restored["available_credits"] == 2
+    assert restored["available_credits"] == 4
 
 
 def test_balance_events_record_converted_ai_cost(
