@@ -11,7 +11,6 @@ from typing import Iterator
 from recrbro.config import (
     CREDIT_COST_MULTIPLIER,
     DATABASE_PATH,
-    SEARCH_CREDIT_COST,
     SEED_DEMO_USERS,
 )
 from recrbro.currency import eur_usd_rate, usd_to_eur
@@ -546,12 +545,6 @@ def create_search(
         ).fetchone()
         if user is None:
             raise LookupError("User not found.")
-        if user["plan"] == "premium":
-            balance = _balance(database, user_id)
-            if balance < SEARCH_CREDIT_COST:
-                raise RuntimeError(
-                    "Not enough credits to run a search. Buy more credits to continue."
-                )
         cursor = database.execute(
             """
             INSERT INTO searches
@@ -569,16 +562,7 @@ def create_search(
                 _now(),
             ),
         )
-        search_id = int(cursor.lastrowid)
-        if user["plan"] == "premium":
-            _record_balance_event(
-                database,
-                user_id,
-                "search",
-                -SEARCH_CREDIT_COST,
-                f"search:{search_id}",
-            )
-        return search_id
+        return int(cursor.lastrowid)
 
 
 def complete_search(
@@ -998,17 +982,6 @@ def list_balance_events(user_id: int) -> list[BalanceEvent]:
             (user_id,),
         ).fetchall()
     return [BalanceEvent.model_validate(dict(row)) for row in rows]
-
-
-def _balance(database: sqlite3.Connection, user_id: int) -> float:
-    row = database.execute(
-        """
-        SELECT COALESCE(SUM(delta_credits), 0) AS balance
-        FROM balance_events WHERE user_id = ?
-        """,
-        (user_id,),
-    ).fetchone()
-    return float(row["balance"])
 
 
 def _record_balance_event(

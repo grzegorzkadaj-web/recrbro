@@ -12,9 +12,9 @@ remaining roles against the candidate's requirements.
   queued searches with up to five results each.
 - A verified 2 EUR Przelewy24/BLIK payment adds four credits and restores
   Premium. Premium searches run immediately and return up to ten offers.
-- Credit balance is an append-only event stream containing purchases, search
-  charges, and AI usage charges. AI cost is converted from USD to EUR using the
-  free Frankfurter reference-rate API, then multiplied by the configurable
+- Credit balance is an append-only event stream containing purchases and actual
+  AI usage charges. AI cost is converted from USD to EUR using the free
+  Frankfurter reference-rate API, then multiplied by the configurable
   `CREDIT_COST_MULTIPLIER` (default `10`). At zero, the backend switches the
   account to Free until another payment is verified. Authenticated clients can
   read the ledger through `GET /api/balance-history`.

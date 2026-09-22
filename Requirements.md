@@ -78,7 +78,7 @@ It should implement sorting strategy according to the following criteria: skills
 - there should be a delay for executing next request (configurable parameter, 1h by default)
 ## Premium
 - a 2 EUR purchase adds 4 credits and restores Premium
-- balance is tracked as append-only purchase, search, and AI usage events
+- balance is tracked as append-only purchase and actual AI usage events
 - AI USD cost is converted using the current EUR/USD rate and multiplied by
   the configurable credit-cost multiplier (default 10)
 - payment method is Przelewy24 and BLIK

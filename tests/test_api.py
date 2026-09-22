@@ -885,7 +885,7 @@ def test_credit_exhaustion_downgrades_and_payment_restores(
     assert restored["available_credits"] == 2
 
 
-def test_balance_events_record_search_and_converted_ai_cost(
+def test_balance_events_record_converted_ai_cost(
     client: TestClient,
 ) -> None:
     before = db.usage_summary(2)
@@ -897,8 +897,8 @@ def test_balance_events_record_search_and_converted_ai_cost(
 
     assert search_id > 0
     assert before.available_credits == 4
-    assert after_search.available_credits == 3
-    assert after_usage.available_credits == 1
+    assert after_search.available_credits == 4
+    assert after_usage.available_credits == 2
     with db.connection() as database:
         events = database.execute("""
             SELECT event_type, delta_credits, amount_usd, eur_usd_rate
@@ -906,7 +906,6 @@ def test_balance_events_record_search_and_converted_ai_cost(
             """).fetchall()
     assert [(event["event_type"], event["delta_credits"]) for event in events] == [
         ("opening_credit", 4),
-        ("search", -1),
         ("ai_usage", -2),
     ]
     assert events[-1]["amount_usd"] == 0.25
