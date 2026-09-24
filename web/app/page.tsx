@@ -484,7 +484,7 @@ function Dashboard({
             <label className="wide"><span>Languages</span><input value={profile.languages.join(", ")} onChange={(e) => updateField("languages", splitList(e.target.value))} placeholder="English, Polish" /></label>
             <label className="wide"><span>Other skills</span><input value={profile.other_skills.join(", ")} onChange={(e) => updateField("other_skills", splitList(e.target.value))} placeholder="Docker, Azure, mentoring" /></label>
             <label className="wide"><span>Companies to exclude</span><input value={profile.excluded_companies.join(", ")} onChange={(e) => updateField("excluded_companies", splitList(e.target.value))} placeholder="Company A, Company B" /></label>
-            <label className="wide"><span>Additional limitations</span><textarea value={profile.additional_limitations} onChange={(e) => updateField("additional_limitations", e.target.value)} placeholder="I'm not interested in working in Asia. Find only jobs in Poland." /><small>High-priority instructions used while discovering and validating offers.</small></label>
+            <label className="wide"><span>Additional requirements</span><textarea value={profile.additional_limitations} onChange={(e) => updateField("additional_limitations", e.target.value)} placeholder="I'm interested in jobs in Poland. No night shifts." /><small>High-priority requirements used while discovering and validating offers.</small></label>
           </div>
           <div className="cvCard">
             <div><strong>Build from a CV</strong><span>{profile.cv_filename ? `Using ${profile.cv_filename}` : "Upload a PDF to extract skills and languages."}</span></div>

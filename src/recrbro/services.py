@@ -827,13 +827,19 @@ def _assess_job_results(
         "such as Europe, EU, EEA, or worldwide. Reject only when the text "
         "explicitly limits work to an incompatible location. Treat unclear "
         "eligibility as a match so it can be ranked below explicit matches. "
-        "If requested location is empty, always set location_matches=true. "
+        "If requested_location is empty, still enforce every location constraint "
+        "from candidate_requirements. Phrases such as 'interested in jobs in "
+        "Poland' or 'looking for roles in Poland' require the job to be based in "
+        "Poland or explicitly available to workers in Poland; do not treat them as "
+        "optional preferences. "
         "Set criteria_matches=false when the role does not involve any requested "
         "core skill, or when it explicitly conflicts with requested work modes, "
-        "contract types, minimum salary, or candidate limitations. Missing salary "
-        "or contract details are not conflicts. Treat candidate_limitations as "
-        "high-priority requirements. Reject a candidate through location_matches "
-        "when the offer explicitly conflicts with location-related limitations, "
+        "contract types, minimum salary, or candidate requirements. Missing salary "
+        "or contract details are not conflicts. Treat candidate_requirements as "
+        "mandatory requirements even when phrased as interests or preferences. "
+        "Reject a candidate through location_matches when the offer conflicts with "
+        "location-related requirements or does not establish that a required "
+        "location is allowed, "
         "including excluded regions or required countries. "
         "Keep reason concise."
     )
@@ -855,7 +861,7 @@ def _assess_job_results(
                                 "work_modes": profile.work_modes,
                                 "minimum_salary": profile.minimum_salary,
                                 "contract_types": profile.contract_types,
-                                "candidate_limitations": (
+                                "candidate_requirements": (
                                     profile.additional_limitations.strip()
                                 ),
                                 "candidates": list(pending.values()),
@@ -895,7 +901,7 @@ def _assess_job_results(
                 break
         if pending:
             raise RuntimeError("AI job validation did not assess every candidate.")
-    if not profile.location.strip():
+    if not profile.location.strip() and not profile.additional_limitations.strip():
         assessments_by_id = {
             candidate_id: assessment.model_copy(update={"location_matches": True})
             for candidate_id, assessment in assessments_by_id.items()

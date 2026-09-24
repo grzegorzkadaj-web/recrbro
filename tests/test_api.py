@@ -675,7 +675,7 @@ def test_ai_assesses_activity_and_requested_location(
     assert not assessments["https://www.linkedin.com/jobs/view/2"].location_matches
     assert '"requested_location": "Poland"' in captured["messages"][1][1]
     assert (
-        '"candidate_limitations": "Do not include jobs based in Asia."'
+        '"candidate_requirements": "Do not include jobs based in Asia."'
         in captured["messages"][1][1]
     )
     assert recorded_usage == [
@@ -1136,8 +1136,17 @@ def test_user_can_mark_offer_applied_across_search_history(
     assert updated["archival"][0]["applied"] is True
 
 
-def test_empty_location_accepts_any_ai_location_result(
+@pytest.mark.parametrize(
+    ("additional_requirements", "expected_location_match"),
+    [
+        ("", True),
+        ("I'm interested in jobs in Poland.", False),
+    ],
+)
+def test_empty_location_preserves_additional_location_requirements(
     monkeypatch: pytest.MonkeyPatch,
+    additional_requirements: str,
+    expected_location_match: bool,
 ) -> None:
     class FakeStructuredModel:
         def invoke(self, _messages: list[tuple[str, str]]) -> dict:
@@ -1170,6 +1179,7 @@ def test_empty_location_accepts_any_ai_location_result(
     profile = db.get_profile(2)
     assert profile is not None
     profile.location = ""
+    profile.additional_limitations = additional_requirements
 
     assessments = services._assess_job_results(
         profile,
@@ -1181,7 +1191,10 @@ def test_empty_location_accepts_any_ai_location_result(
         },
     )
 
-    assert assessments["https://www.linkedin.com/jobs/view/1"].location_matches
+    assert (
+        assessments["https://www.linkedin.com/jobs/view/1"].location_matches
+        is expected_location_match
+    )
 
 
 def test_collection_pages_are_crawled_when_no_verified_jobs(
