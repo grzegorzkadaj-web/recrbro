@@ -34,10 +34,35 @@ LIST_FIELDS = {
     "excluded_companies",
 }
 FREE_STARTING_CREDITS = 0.1
+STALE_SEARCH_MINUTES = 15
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _fail_stale_searches(
+    database: sqlite3.Connection, user_id: int | None = None
+) -> None:
+    stale_before = (
+        datetime.now(timezone.utc) - timedelta(minutes=STALE_SEARCH_MINUTES)
+    ).isoformat()
+    user_filter = " AND user_id = ?" if user_id is not None else ""
+    parameters: tuple[object, ...] = (
+        (_now(), stale_before, user_id)
+        if user_id is not None
+        else (_now(), stale_before)
+    )
+    database.execute(
+        f"""
+        UPDATE searches
+        SET status = 'failed',
+            error = 'Search was interrupted before completion.',
+            completed_at = ?
+        WHERE status = 'running' AND created_at < ?{user_filter}
+        """,
+        parameters,
+    )
 
 
 @contextmanager
@@ -250,17 +275,7 @@ def initialize_database() -> None:
                OR lower(url) LIKE '%/careers'
                OR lower(url) LIKE '%/vacancies'
             """)
-        stale_before = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
-        database.execute(
-            """
-            UPDATE searches
-            SET status = 'failed',
-                error = 'Search was interrupted before completion.',
-                completed_at = ?
-            WHERE status = 'running' AND created_at < ?
-            """,
-            (_now(), stale_before),
-        )
+        _fail_stale_searches(database)
         payment_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(payments)")
         }
@@ -605,6 +620,7 @@ def create_search(
 ) -> int:
     available = available_at or datetime.now(timezone.utc)
     with connection() as database:
+        _fail_stale_searches(database, user_id)
         user = database.execute(
             "SELECT plan FROM users WHERE id = ?", (user_id,)
         ).fetchone()
@@ -732,6 +748,7 @@ def _search_from_row(database: sqlite3.Connection, row: sqlite3.Row) -> SearchJo
 
 def get_search(search_id: int, user_id: int | None = None) -> SearchJob | None:
     with connection() as database:
+        _fail_stale_searches(database, user_id)
         if user_id is None:
             row = database.execute(
                 "SELECT * FROM searches WHERE id = ?", (search_id,)
@@ -746,6 +763,7 @@ def get_search(search_id: int, user_id: int | None = None) -> SearchJob | None:
 
 def get_search_results(user_id: int) -> SearchResults:
     with connection() as database:
+        _fail_stale_searches(database, user_id)
         rows = database.execute(
             """
             SELECT * FROM searches
