@@ -95,12 +95,12 @@ class SearchRequest(BaseModel):
 
 class JobOffer(BaseModel):
     id: int | None = None
-    result_type: Literal["job", "collection"] = "job"
+    result_type: Literal["job"] = "job"
     title: str
     company: str
     url: HttpUrl
     summary: str
-    score: float | None
+    score: float
     matched_skills: list[str] = Field(default_factory=list)
     match_reasons: list[str] = Field(default_factory=list)
     applied: bool = False

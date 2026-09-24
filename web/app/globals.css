@@ -625,11 +625,6 @@ textarea:focus {
   box-shadow: var(--shadow);
 }
 
-.offerCard.collectionCard {
-  border-style: dashed;
-  background: #eeeee8;
-}
-
 .offerCard.appliedCard {
   border-color: #91b7a3;
   background: #f0f7f2;
@@ -648,18 +643,6 @@ textarea:focus {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.collectionBadge {
-  display: inline-block;
-  margin-left: 9px;
-  padding: 4px 7px;
-  border-radius: 6px;
-  background: #d9ddd6;
-  color: #546361;
-  font-size: 9px;
-  letter-spacing: 0.11em;
-  vertical-align: middle;
 }
 
 .appliedBadge {
@@ -686,18 +669,6 @@ textarea:focus {
 .score strong,
 .score span {
   display: block;
-}
-
-.collectionIcon {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  place-items: center;
-  border-radius: 50%;
-  background: #d9ddd6;
-  color: #546361;
-  font-size: 22px;
-  letter-spacing: 2px;
 }
 
 .score strong {

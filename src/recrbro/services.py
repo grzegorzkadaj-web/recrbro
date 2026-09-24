@@ -92,6 +92,7 @@ class JobAssessment(BaseModel):
     candidate_id: int
     is_active: bool
     location_matches: bool
+    criteria_matches: bool = True
     reason: str
 
 
@@ -450,6 +451,64 @@ def _job_title_from_url(url: str) -> str:
     return slug.replace("-", " ").strip().title() or "Job offer"
 
 
+def _looks_like_job_detail_link(url: str, title: str) -> bool:
+    if _canonical_linkedin_job_url(url):
+        return True
+    candidate = {"url": url, "title": title}
+    if _looks_like_collection(candidate):
+        return False
+    normalized_title = title.casefold().strip()
+    if (
+        normalized_title.endswith(" jobs")
+        or "browse jobs" in normalized_title
+        or "search jobs" in normalized_title
+        or "view jobs" in normalized_title
+    ):
+        return False
+    parsed = urlparse(url)
+    path_parts = [part for part in parsed.path.casefold().split("/") if part]
+    detail_markers = {
+        "career",
+        "careers",
+        "job",
+        "jobs",
+        "offer",
+        "offers",
+        "opening",
+        "openings",
+        "position",
+        "positions",
+        "praca",
+        "role",
+        "roles",
+        "vacancies",
+        "vacancy",
+    }
+    if any(part in detail_markers for part in path_parts) and len(path_parts) >= 2:
+        return True
+    if any(
+        key.casefold() in {"gh_jid", "job_id", "jobid", "position_id", "vacancy_id"}
+        for key in parse_qs(parsed.query)
+    ):
+        return True
+    return any(
+        role in normalized_title
+        for role in (
+            "administrator",
+            "analyst",
+            "architect",
+            "consultant",
+            "designer",
+            "developer",
+            "engineer",
+            "manager",
+            "scientist",
+            "specialist",
+            "tester",
+        )
+    )
+
+
 def _extract_collection_jobs(
     collection_results: dict[str, dict],
     existing_urls: set[str],
@@ -459,9 +518,12 @@ def _extract_collection_jobs(
 
     def add_job(candidate_url: str, title: str = "") -> None:
         absolute_url = urljoin(collection_url, candidate_url)
-        canonical_url = _canonical_linkedin_job_url(absolute_url)
+        canonical_url = _canonical_linkedin_job_url(
+            absolute_url
+        ) or _canonical_external_url(absolute_url)
         if (
             canonical_url is None
+            or not _looks_like_job_detail_link(canonical_url, title)
             or canonical_url in existing_urls
             or canonical_url in jobs
             or len(jobs) >= limit
@@ -498,6 +560,13 @@ def _extract_collection_jobs(
             r"urn:li:jobPosting:(\d+)", normalized_content, flags=re.IGNORECASE
         ):
             add_job(f"https://www.linkedin.com/jobs/view/{job_id}")
+
+        for match in re.finditer(
+            r"https?://[^\s\"'<>\\)]+",
+            normalized_content,
+            flags=re.IGNORECASE,
+        ):
+            add_job(match.group().rstrip(".,;"))
 
         if len(jobs) >= limit:
             break
@@ -645,12 +714,19 @@ def _assess_job_results(
                 candidate_id=index,
                 is_active=True,
                 location_matches=True,
+                criteria_matches=(
+                    not profile.core_skills
+                    or any(
+                        skill.casefold() in _offer_page_text(result).casefold()
+                        for skill in profile.core_skills
+                    )
+                ),
                 reason=(
                     "Deterministic content validation; AI eligibility validation "
                     "requires available credits."
                 ),
             )
-            for index, url in enumerate(results_by_url)
+            for index, (url, result) in enumerate(results_by_url.items())
         }
     if not OPENAI_API_KEY:
         raise RuntimeError(
@@ -688,9 +764,13 @@ def _assess_job_results(
         "explicitly limits work to an incompatible location. Treat unclear "
         "eligibility as a match so it can be ranked below explicit matches. "
         "If requested location is empty, always set location_matches=true. "
-        "Treat candidate_limitations as high-priority requirements. Reject a "
-        "candidate through location_matches when the offer explicitly conflicts "
-        "with those limitations, including excluded regions or required countries. "
+        "Set criteria_matches=false when the role does not involve any requested "
+        "core skill, or when it explicitly conflicts with requested work modes, "
+        "contract types, minimum salary, or candidate limitations. Missing salary "
+        "or contract details are not conflicts. Treat candidate_limitations as "
+        "high-priority requirements. Reject a candidate through location_matches "
+        "when the offer explicitly conflicts with location-related limitations, "
+        "including excluded regions or required countries. "
         "Keep reason concise."
     )
     assessments_by_id: dict[int, JobAssessment] = {}
@@ -707,6 +787,10 @@ def _assess_job_results(
                         json.dumps(
                             {
                                 "requested_location": profile.location.strip(),
+                                "core_skills": profile.core_skills,
+                                "work_modes": profile.work_modes,
+                                "minimum_salary": profile.minimum_salary,
+                                "contract_types": profile.contract_types,
                                 "candidate_limitations": (
                                     profile.additional_limitations.strip()
                                 ),
@@ -840,6 +924,7 @@ def _build_job_offers(
         "inactive": 0,
         "ai_inactive": 0,
         "location_mismatch": 0,
+        "criteria_mismatch": 0,
         "excluded_company": 0,
         "tavily_fallback": 0,
     }
@@ -859,6 +944,9 @@ def _build_job_offers(
             continue
         if not assessment.location_matches:
             counts["location_mismatch"] += 1
+            continue
+        if not assessment.criteria_matches:
+            counts["criteria_mismatch"] += 1
             continue
         title = result.get("title") or _job_title_from_url(url)
         company = _company_from_title(title, url)
@@ -895,35 +983,6 @@ def _build_job_offers(
     return offers, counts
 
 
-def _build_collection_offers(
-    collection_results: dict[str, dict], excluded: set[str]
-) -> list[JobOffer]:
-    offers: list[JobOffer] = []
-    for url, result in collection_results.items():
-        if not _is_active_offer(result):
-            continue
-        title = str(result.get("title") or "Browse related job openings")
-        company = _company_from_title(title, url)
-        if any(name in company.casefold() for name in excluded):
-            continue
-        content = str(result.get("raw_content") or result.get("content") or "")
-        offers.append(
-            JobOffer(
-                result_type="collection",
-                title=title,
-                company=company,
-                url=url,
-                summary=content[:500] or "Browse this source for related job openings.",
-                score=None,
-                matched_skills=[],
-                match_reasons=[
-                    "Collection page — review individual offers on the source"
-                ],
-            )
-        )
-    return offers
-
-
 def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str | None]:
     if not TAVILY_API_KEY:
         raise RuntimeError(
@@ -938,6 +997,7 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
     results_per_query = min(20, math.ceil(candidate_limit / len(search_queries)))
     discovered_count = 0
     duplicate_count = 0
+    collection_job_count = 0
 
     try:
         for search_query in search_queries:
@@ -991,45 +1051,39 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
             destination[url] = result
         _populate_missing_page_content(client, job_results)
         _populate_missing_page_content(client, collection_results)
-    except TAVILY_ERRORS as error:
-        raise RuntimeError(f"Tavily search failed: {error}") from error
-
-    excluded = {company.casefold() for company in profile.excluded_companies}
-    offers, counts = _build_job_offers(profile, job_results, excluded)
-    collection_job_count = 0
-    if len(offers) < limit and collection_results:
         collection_candidates = _extract_collection_jobs(
             collection_results,
             set(job_results),
             candidate_limit,
         )
         if collection_candidates:
-            try:
-                (
-                    collection_jobs,
-                    _nested_collections,
-                    collection_invalid_count,
-                ) = _verify_linkedin_urls(collection_candidates)
-                _populate_missing_page_content(client, collection_jobs)
-            except TAVILY_ERRORS as error:
-                raise RuntimeError(f"Tavily search failed: {error}") from error
-            collection_job_count = len(collection_jobs)
-            invalid_link_count += collection_invalid_count
-            fallback_offers, fallback_counts = _build_job_offers(
-                profile, collection_jobs, excluded
+            linkedin_collection_candidates = {
+                url: result
+                for url, result in collection_candidates.items()
+                if _is_linkedin_jobs_url(url)
+            }
+            collection_jobs, _, collection_invalid_count = _verify_linkedin_urls(
+                linkedin_collection_candidates
             )
-            offers.extend(fallback_offers)
-            for name, count in fallback_counts.items():
-                counts[name] += count
+            invalid_link_count += collection_invalid_count
+            collection_jobs.update(
+                {
+                    url: result
+                    for url, result in collection_candidates.items()
+                    if url not in linkedin_collection_candidates
+                    and not _looks_like_collection(result)
+                }
+            )
+            _populate_missing_page_content(client, collection_jobs)
+            collection_job_count = len(collection_jobs)
+            for url, result in collection_jobs.items():
+                job_results.setdefault(url, result)
+    except TAVILY_ERRORS as error:
+        raise RuntimeError(f"Tavily search failed: {error}") from error
 
+    excluded = {company.casefold() for company in profile.excluded_companies}
+    offers, counts = _build_job_offers(profile, job_results, excluded)
     offers.sort(key=lambda offer: offer.score or 0, reverse=True)
-    individual_count = len(offers)
-    if len(offers) < limit:
-        offers.extend(
-            _build_collection_offers(collection_results, excluded)[
-                : limit - len(offers)
-            ]
-        )
     offers = offers[:limit]
 
     warning = None
@@ -1039,11 +1093,13 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
             + counts["inactive"]
             + counts["ai_inactive"]
             + counts["location_mismatch"]
+            + counts["criteria_mismatch"]
             + counts["excluded_company"]
         )
         filter_note = (
             f" {filtered_count} non-detail, inactive, location-mismatched, "
-            "excluded-company, or unverifiable offers were removed."
+            "excluded-company, or unverifiable offers were removed, including "
+            "offers that did not match the remaining criteria."
             if filtered_count
             else ""
         )
@@ -1053,14 +1109,14 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
             f"{invalid_link_count} unresolved, "
             f"{counts['inactive'] + counts['ai_inactive']} "
             f"inactive, {counts['location_mismatch']} location mismatches, "
+            f"{counts['criteria_mismatch']} criteria mismatches, "
             f"{counts['excluded_company']} excluded companies, "
             f"{collection_job_count} jobs extracted from collection pages, and "
             f"{counts['tavily_fallback']} Tavily-content fallbacks."
         )
         warning = (
-            f"Tavily returned {individual_count} verified individual offers "
-            f"and {len(offers) - individual_count} collection fallbacks for this query; "
-            f"the plan allows up to {limit}.{filter_note}{diagnostics}"
+            f"Tavily returned {len(offers)} verified individual offers for this "
+            f"query; the plan allows up to {limit}.{filter_note}{diagnostics}"
         )
     return query, offers, warning
 

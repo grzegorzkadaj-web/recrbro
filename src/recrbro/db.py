@@ -236,6 +236,7 @@ def initialize_database() -> None:
             database.execute(
                 "ALTER TABLE job_offers ADD COLUMN result_type TEXT NOT NULL DEFAULT 'job'"
             )
+        database.execute("DELETE FROM job_offers WHERE result_type != 'job'")
         payment_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(payments)")
         }
@@ -625,7 +626,7 @@ def complete_search(
                     offer.company,
                     str(offer.url),
                     offer.summary,
-                    offer.score if offer.score is not None else 0,
+                    offer.score,
                     json.dumps(offer.matched_skills),
                     json.dumps(offer.match_reasons),
                 )
@@ -696,9 +697,6 @@ def _search_from_row(database: sqlite3.Connection, row: sqlite3.Row) -> SearchJo
             JobOffer.model_validate(
                 {
                     **dict(offer),
-                    "score": (
-                        None if offer["result_type"] == "collection" else offer["score"]
-                    ),
                     "matched_skills": json.loads(offer["matched_skills"]),
                     "match_reasons": json.loads(offer["match_reasons"]),
                 }
@@ -760,7 +758,7 @@ def mark_offer_applied(user_id: int, offer_id: int) -> bool:
             """,
             (offer_id, user_id),
         ).fetchone()
-        if offer is None or offer["result_type"] != "job":
+        if offer is None:
             return False
         database.execute(
             """

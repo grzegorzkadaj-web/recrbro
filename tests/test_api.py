@@ -1209,7 +1209,58 @@ def test_collection_pages_are_crawled_when_no_verified_jobs(
 
     assert response.status_code == 200
     offers = response.json()["offers"]
-    assert [offer["result_type"] for offer in offers] == ["job", "collection"]
+    assert [offer["result_type"] for offer in offers] == ["job"]
     assert offers[0]["url"] == "https://www.linkedin.com/jobs/view/4441830533"
     assert offers[0]["company"] == "Fallback Company"
-    assert offers[1]["score"] is None
+    assert "collection fallbacks" not in response.json()["warning"]
+
+
+def test_external_collection_pages_return_only_extracted_job_details(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    accept_job_analysis: None,
+) -> None:
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            assert api_key == "test-key"
+
+        def search(self, **_: object) -> dict:
+            return {
+                "results": [
+                    {
+                        "title": "Example careers",
+                        "url": "https://example.com/careers",
+                        "content": "Browse current openings.",
+                        "raw_content": (
+                            '<a href="/careers/python-developer">'
+                            "Python Developer - Example</a>"
+                            '<a href="/careers">Browse jobs</a>'
+                        ),
+                    }
+                ]
+            }
+
+        def extract(self, **kwargs: object) -> dict:
+            assert kwargs["urls"] == ["https://example.com/careers/python-developer"]
+            return {
+                "results": [
+                    {
+                        "url": "https://example.com/careers/python-developer",
+                        "raw_content": (
+                            "Python Developer. Work remotely from Poland. Apply now."
+                        ),
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
+    monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
+
+    response = client.post("/api/users/2/search", json={"max_results": 2})
+
+    assert response.status_code == 200
+    offers = response.json()["offers"]
+    assert [offer["url"] for offer in offers] == [
+        "https://example.com/careers/python-developer"
+    ]
+    assert all(offer["result_type"] == "job" for offer in offers)

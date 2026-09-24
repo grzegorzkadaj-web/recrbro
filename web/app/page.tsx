@@ -46,12 +46,12 @@ type Profile = {
 };
 type JobOffer = {
   id: number;
-  result_type: "job" | "collection";
+  result_type: "job";
   title: string;
   company: string;
   url: string;
   summary: string;
-  score: number | null;
+  score: number;
   matched_skills: string[];
   match_reasons: string[];
   applied: boolean;
@@ -509,10 +509,10 @@ function Dashboard({
           <div className="emptyState"><span>◎</span><h3>Your shortlist starts here</h3><p>Save your profile and run a search to see ranked job offers.</p></div>
         ) : (
           <div className="offerList">{offers.map((offer, index) => (
-            <article className={`offerCard ${offer.result_type === "collection" ? "collectionCard" : ""} ${offer.applied ? "appliedCard" : ""}`} key={offer.id}>
+            <article className={`offerCard ${offer.applied ? "appliedCard" : ""}`} key={offer.id}>
               <div className="rank">{String(index + 1).padStart(2, "0")}</div>
-              <div className="offerBody"><div className="offerTitle"><div><p>{offer.company}{offer.result_type === "collection" && <span className="collectionBadge">collection</span>}{offer.applied && <span className="appliedBadge">applied</span>}</p><h3>{offer.title}</h3></div>{offer.result_type === "job" && offer.score !== null ? <div className="score"><strong>{Math.round(offer.score)}%</strong><span>match</span></div> : <div className="collectionIcon">•••</div>}</div><p className="summary">{offer.summary}</p><div className="tags">{offer.match_reasons.map((reason) => <span key={reason}>{reason}</span>)}</div></div>
-              <div className="offerActions"><a className="openOffer" href={offer.url} target="_blank" rel="noreferrer">{offer.result_type === "job" ? "Open offer" : "Browse jobs"} <span>↗</span></a>{offer.result_type === "job" && !offer.applied && <button className="appliedButton" disabled={applyingOfferIds.has(offer.id)} onClick={() => markApplied(offer)}>{applyingOfferIds.has(offer.id) ? "Saving..." : "Applied"}</button>}</div>
+              <div className="offerBody"><div className="offerTitle"><div><p>{offer.company}{offer.applied && <span className="appliedBadge">applied</span>}</p><h3>{offer.title}</h3></div><div className="score"><strong>{Math.round(offer.score)}%</strong><span>match</span></div></div><p className="summary">{offer.summary}</p><div className="tags">{offer.match_reasons.map((reason) => <span key={reason}>{reason}</span>)}</div></div>
+              <div className="offerActions"><a className="openOffer" href={offer.url} target="_blank" rel="noreferrer">Open offer <span>↗</span></a>{!offer.applied && <button className="appliedButton" disabled={applyingOfferIds.has(offer.id)} onClick={() => markApplied(offer)}>{applyingOfferIds.has(offer.id) ? "Saving..." : "Applied"}</button>}</div>
             </article>
           ))}</div>
         )}
@@ -523,10 +523,10 @@ function Dashboard({
           <div className="emptyState"><span>↺</span><h3>No archived offers yet</h3><p>Your current results move here as soon as you start another search.</p></div>
         ) : (
           <div className="offerList">{archivalOffers.map((offer, index) => (
-            <article className={`offerCard ${offer.result_type === "collection" ? "collectionCard" : ""} ${offer.applied ? "appliedCard" : ""}`} key={offer.id}>
+            <article className={`offerCard ${offer.applied ? "appliedCard" : ""}`} key={offer.id}>
               <div className="rank">{String(index + 1).padStart(2, "0")}</div>
-              <div className="offerBody"><div className="offerTitle"><div><p>{offer.company}{offer.result_type === "collection" && <span className="collectionBadge">collection</span>}{offer.applied && <span className="appliedBadge">applied</span>}</p><h3>{offer.title}</h3></div>{offer.result_type === "job" && offer.score !== null ? <div className="score"><strong>{Math.round(offer.score)}%</strong><span>match</span></div> : <div className="collectionIcon">•••</div>}</div><p className="summary">{offer.summary}</p><div className="tags">{offer.match_reasons.map((reason) => <span key={reason}>{reason}</span>)}</div></div>
-              <div className="offerActions"><a className="openOffer" href={offer.url} target="_blank" rel="noreferrer">{offer.result_type === "job" ? "Open offer" : "Browse jobs"} <span>↗</span></a>{offer.result_type === "job" && !offer.applied && <button className="appliedButton" disabled={applyingOfferIds.has(offer.id)} onClick={() => markApplied(offer)}>{applyingOfferIds.has(offer.id) ? "Saving..." : "Applied"}</button>}</div>
+              <div className="offerBody"><div className="offerTitle"><div><p>{offer.company}{offer.applied && <span className="appliedBadge">applied</span>}</p><h3>{offer.title}</h3></div><div className="score"><strong>{Math.round(offer.score)}%</strong><span>match</span></div></div><p className="summary">{offer.summary}</p><div className="tags">{offer.match_reasons.map((reason) => <span key={reason}>{reason}</span>)}</div></div>
+              <div className="offerActions"><a className="openOffer" href={offer.url} target="_blank" rel="noreferrer">Open offer <span>↗</span></a>{!offer.applied && <button className="appliedButton" disabled={applyingOfferIds.has(offer.id)} onClick={() => markApplied(offer)}>{applyingOfferIds.has(offer.id) ? "Saving..." : "Applied"}</button>}</div>
             </article>
           ))}</div>
         )}
