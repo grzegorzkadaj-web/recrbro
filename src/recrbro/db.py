@@ -236,7 +236,20 @@ def initialize_database() -> None:
             database.execute(
                 "ALTER TABLE job_offers ADD COLUMN result_type TEXT NOT NULL DEFAULT 'job'"
             )
-        database.execute("DELETE FROM job_offers WHERE result_type != 'job'")
+        database.execute("""
+            DELETE FROM job_offers
+            WHERE result_type != 'job'
+               OR (
+                    lower(url) LIKE '%linkedin.com/jobs/%'
+                    AND lower(url) NOT LIKE '%linkedin.com/jobs/view/%'
+               )
+               OR lower(url) LIKE '%indeed.com/q-%-jobs.html%'
+               OR lower(url) LIKE '%glassdoor.com/job/%-jobs-srch_%'
+               OR lower(url) LIKE '%/jobs'
+               OR lower(url) LIKE '%/jobs/search%'
+               OR lower(url) LIKE '%/careers'
+               OR lower(url) LIKE '%/vacancies'
+            """)
         payment_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(payments)")
         }

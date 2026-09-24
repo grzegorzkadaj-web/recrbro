@@ -49,6 +49,45 @@ def test_seeds_free_and_premium_users(client: TestClient) -> None:
     ]
 
 
+def test_database_startup_removes_persisted_collection_pages(
+    client: TestClient,
+) -> None:
+    search_id = db.create_search(2, "collections", requested_results=3)
+    offers = [
+        (
+            "https://www.indeed.com/q-remote-php-developer-europe-jobs.html",
+            "Indeed jobs",
+        ),
+        (
+            "https://www.glassdoor.com/Job/poland-developer-remote-web-jobs-"
+            "SRCH_IL.0,6_IN193_KO7,27.htm",
+            "Glassdoor jobs",
+        ),
+        ("https://example.com/jobs/python-developer", "Python Developer"),
+    ]
+    with db.connection() as database:
+        database.executemany(
+            """
+            INSERT INTO job_offers
+                (search_id, result_type, title, company, url, summary, score,
+                 matched_skills, match_reasons)
+            VALUES (?, 'job', ?, 'Example', ?, 'Summary', 75, '[]', '[]')
+            """,
+            [(search_id, title, url) for url, title in offers],
+        )
+
+    db.initialize_database()
+
+    with db.connection() as database:
+        remaining_urls = {
+            row["url"]
+            for row in database.execute(
+                "SELECT url FROM job_offers WHERE search_id = ?", (search_id,)
+            )
+        }
+    assert remaining_urls == {"https://example.com/jobs/python-developer"}
+
+
 def test_user_foreign_keys_cascade(client: TestClient) -> None:
     expected_foreign_keys = {
         "sessions": ("users", "user_id", "id"),
