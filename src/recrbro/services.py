@@ -415,10 +415,19 @@ def _canonical_external_url(url: str) -> str | None:
 
 def _looks_like_collection(result: dict) -> bool:
     parsed = urlparse(str(result.get("url") or ""))
+    hostname = (parsed.hostname or "").casefold().removeprefix("www.")
     path = parsed.path.casefold().rstrip("/")
     query = parse_qs(parsed.query)
     title = str(result.get("title") or "").casefold()
     if _canonical_linkedin_collection_url(str(result.get("url") or "")):
+        return True
+    if hostname.endswith("indeed.com") and (
+        path.startswith("/q-") or ("q" in query and "jk" not in query)
+    ):
+        return True
+    if hostname.endswith("glassdoor.com") and (
+        "-jobs-srch_" in path or ("srch_" in path and "/job/" in path)
+    ):
         return True
     collection_paths = (
         "/jobs",
@@ -435,6 +444,7 @@ def _looks_like_collection(result: dict) -> bool:
             key.casefold() in {"keywords", "keyword", "search", "query"}
             for key in query
         )
+        or bool(re.search(r"\bjobs\b(?:\s+(?:in|near)|\s*[-–|]|\s*$)", title))
         or (
             " jobs" in title
             and not any(
@@ -487,8 +497,14 @@ def _looks_like_job_detail_link(url: str, title: str) -> bool:
     if any(part in detail_markers for part in path_parts) and len(path_parts) >= 2:
         return True
     if any(
-        key.casefold() in {"gh_jid", "job_id", "jobid", "position_id", "vacancy_id"}
+        key.casefold()
+        in {"gh_jid", "jk", "job_id", "jobid", "position_id", "vacancy_id"}
         for key in parse_qs(parsed.query)
+    ):
+        return True
+    if any(
+        marker in parsed.path.casefold()
+        for marker in ("/job-listing/", "/viewjob", "/jobdetails/")
     ):
         return True
     return any(
@@ -570,6 +586,54 @@ def _extract_collection_jobs(
 
         if len(jobs) >= limit:
             break
+    return jobs
+
+
+def _search_collection_jobs(
+    client: TavilyClient,
+    profile: Profile,
+    collection_results: dict[str, dict],
+    existing_urls: set[str],
+    limit: int,
+) -> dict[str, dict]:
+    jobs: dict[str, dict] = {}
+    query = f"{build_search_query(profile)} job opening"
+    searched_domains: set[str] = set()
+    for collection_url in collection_results:
+        hostname = (
+            (urlparse(collection_url).hostname or "").casefold().removeprefix("www.")
+        )
+        if not hostname or hostname in searched_domains or len(jobs) >= limit:
+            continue
+        searched_domains.add(hostname)
+        response = client.search(
+            query=query,
+            search_depth="advanced",
+            max_results=min(10, limit - len(jobs)),
+            topic="general",
+            include_domains=[hostname],
+            include_domains_mode="filter",
+            include_raw_content="text",
+        )
+        for result in response.get("results", []):
+            url = str(result.get("url") or "")
+            canonical_url = _canonical_linkedin_job_url(url) or _canonical_external_url(
+                url
+            )
+            if (
+                canonical_url is None
+                or canonical_url in existing_urls
+                or canonical_url in jobs
+                or _looks_like_collection({**result, "url": canonical_url})
+                or not _looks_like_job_detail_link(
+                    canonical_url, str(result.get("title") or "")
+                )
+            ):
+                continue
+            result["url"] = canonical_url
+            jobs[canonical_url] = result
+            if len(jobs) >= limit:
+                break
     return jobs
 
 
@@ -921,6 +985,7 @@ def _build_job_offers(
     profile: Profile, results_by_url: dict[str, dict], excluded: set[str]
 ) -> tuple[list[JobOffer], dict[str, int]]:
     counts = {
+        "collection": 0,
         "inactive": 0,
         "ai_inactive": 0,
         "location_mismatch": 0,
@@ -930,6 +995,9 @@ def _build_job_offers(
     }
     plausible_results: dict[str, dict] = {}
     for url, result in results_by_url.items():
+        if _looks_like_collection(result):
+            counts["collection"] += 1
+            continue
         if not _is_active_offer(result):
             counts["inactive"] += 1
             continue
@@ -1056,6 +1124,15 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
             set(job_results),
             candidate_limit,
         )
+        collection_candidates.update(
+            _search_collection_jobs(
+                client,
+                profile,
+                collection_results,
+                set(job_results) | set(collection_candidates),
+                candidate_limit - len(collection_candidates),
+            )
+        )
         if collection_candidates:
             linkedin_collection_candidates = {
                 url: result
@@ -1090,6 +1167,7 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
     if len(offers) < limit:
         filtered_count = (
             invalid_link_count
+            + counts["collection"]
             + counts["inactive"]
             + counts["ai_inactive"]
             + counts["location_mismatch"]
@@ -1106,7 +1184,7 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
         diagnostics = (
             f" Diagnostics: {len(search_queries)} queries, {discovered_count} results, "
             f"{len(results_by_url)} unique job-source URLs, {duplicate_count} duplicates, "
-            f"{invalid_link_count} unresolved, "
+            f"{invalid_link_count} unresolved, {counts['collection']} collection pages, "
             f"{counts['inactive'] + counts['ai_inactive']} "
             f"inactive, {counts['location_mismatch']} location mismatches, "
             f"{counts['criteria_mismatch']} criteria mismatches, "

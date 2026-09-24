@@ -1264,3 +1264,77 @@ def test_external_collection_pages_return_only_extracted_job_details(
         "https://example.com/careers/python-developer"
     ]
     assert all(offer["result_type"] == "job" for offer in offers)
+
+
+@pytest.mark.parametrize(
+    ("title", "url"),
+    [
+        (
+            "292 developer remote web Jobs in Poland, September 2026",
+            "https://www.glassdoor.com/Job/poland-developer-remote-web-jobs-"
+            "SRCH_IL.0,6_IN193_KO7,27.htm",
+        ),
+        (
+            "Flexible Remote PHP Developer Europe Jobs – Apply Today",
+            "https://www.indeed.com/q-remote-php-developer-europe-jobs.html",
+        ),
+    ],
+)
+def test_job_board_search_pages_are_collections(title: str, url: str) -> None:
+    assert services._looks_like_collection({"title": title, "url": url})
+
+
+def test_collection_without_links_uses_domain_search_for_job_details(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    accept_job_analysis: None,
+) -> None:
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            assert api_key == "test-key"
+
+        def search(self, **kwargs: object) -> dict:
+            if kwargs.get("include_domains") == ["indeed.com"]:
+                return {
+                    "results": [
+                        {
+                            "title": "Senior PHP Developer - Example",
+                            "url": "https://www.indeed.com/viewjob?jk=detail123",
+                            "content": "Remote PHP role in Poland.",
+                            "raw_content": "Remote PHP role in Poland. Apply now.",
+                        },
+                        {
+                            "title": "Remote PHP Developer Jobs",
+                            "url": "https://www.indeed.com/q-remote-php-developer-jobs.html",
+                            "content": "Browse jobs.",
+                            "raw_content": "Browse jobs.",
+                        },
+                    ]
+                }
+            return {
+                "results": [
+                    {
+                        "title": "Remote PHP Developer Europe Jobs",
+                        "url": (
+                            "https://www.indeed.com/"
+                            "q-remote-php-developer-europe-jobs.html"
+                        ),
+                        "content": "Browse current openings.",
+                        "raw_content": "Browse current openings.",
+                    }
+                ]
+            }
+
+        def extract(self, **_: object) -> dict:
+            return {"results": []}
+
+    monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
+    monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
+
+    response = client.post("/api/users/2/search", json={"max_results": 2})
+
+    assert response.status_code == 200
+    offers = response.json()["offers"]
+    assert [offer["url"] for offer in offers] == [
+        "https://www.indeed.com/viewjob?jk=detail123"
+    ]
