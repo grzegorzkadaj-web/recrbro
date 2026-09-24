@@ -49,6 +49,88 @@ def test_seeds_free_and_premium_users(client: TestClient) -> None:
     ]
 
 
+def test_user_foreign_keys_cascade(client: TestClient) -> None:
+    expected_foreign_keys = {
+        "sessions": ("users", "user_id", "id"),
+        "profiles": ("users", "user_id", "id"),
+        "searches": ("users", "user_id", "id"),
+        "job_offers": ("searches", "search_id", "id"),
+        "user_offer_statuses": ("users", "user_id", "id"),
+        "usage_events": ("users", "user_id", "id"),
+        "payments": ("users", "user_id", "id"),
+        "balance_events": ("users", "user_id", "id"),
+    }
+    user = db.create_user("Cascade Test", "cascade@example.com")
+
+    with db.connection() as database:
+        for table, expected in expected_foreign_keys.items():
+            foreign_keys = database.execute(
+                f"PRAGMA foreign_key_list({table})"
+            ).fetchall()
+            assert [(row["table"], row["from"], row["to"]) for row in foreign_keys] == [
+                expected
+            ]
+            assert foreign_keys[0]["on_delete"] == "CASCADE"
+
+        database.execute(
+            """
+            INSERT INTO sessions (token_hash, user_id, expires_at, created_at)
+            VALUES ('cascade-token', ?, '2099-01-01', '2026-01-01')
+            """,
+            (user.id,),
+        )
+        search_id = database.execute(
+            """
+            INSERT INTO searches (user_id, query, status, created_at)
+            VALUES (?, 'cascade', 'complete', '2026-01-01')
+            """,
+            (user.id,),
+        ).lastrowid
+        database.execute(
+            """
+            INSERT INTO job_offers
+                (search_id, title, company, url, summary, score,
+                 matched_skills, match_reasons)
+            VALUES (?, 'Role', 'Company', 'https://example.com/cascade',
+                    'Summary', 1, '[]', '[]')
+            """,
+            (search_id,),
+        )
+        database.execute(
+            """
+            INSERT INTO user_offer_statuses (user_id, url, applied_at)
+            VALUES (?, 'https://example.com/cascade', '2026-01-01')
+            """,
+            (user.id,),
+        )
+        database.execute(
+            """
+            INSERT INTO usage_events (user_id, operation, model, created_at)
+            VALUES (?, 'cascade', 'test', '2026-01-01')
+            """,
+            (user.id,),
+        )
+        database.execute(
+            """
+            INSERT INTO payments
+                (user_id, session_id, amount_grosz, method, status, created_at)
+            VALUES (?, 'cascade-payment', 200, 'card', 'pending', '2026-01-01')
+            """,
+            (user.id,),
+        )
+
+        database.execute("DELETE FROM users WHERE id = ?", (user.id,))
+
+        for table in expected_foreign_keys:
+            if table == "job_offers":
+                query = "SELECT COUNT(*) FROM job_offers WHERE search_id = ?"
+                parameters = (search_id,)
+            else:
+                query = f"SELECT COUNT(*) FROM {table} WHERE user_id = ?"
+                parameters = (user.id,)
+            assert database.execute(query, parameters).fetchone()[0] == 0
+
+
 def test_profile_requires_authentication(client: TestClient) -> None:
     response = client.get("/api/profile")
 

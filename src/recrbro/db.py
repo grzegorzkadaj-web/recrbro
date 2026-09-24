@@ -72,13 +72,15 @@ def initialize_database() -> None:
 
             CREATE TABLE IF NOT EXISTS sessions (
                 token_hash TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL,
                 expires_at TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                CONSTRAINT fk_sessions_user
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS profiles (
-                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                user_id INTEGER PRIMARY KEY,
                 core_skills TEXT NOT NULL DEFAULT '[]',
                 other_skills TEXT NOT NULL DEFAULT '[]',
                 languages TEXT NOT NULL DEFAULT '[]',
@@ -89,12 +91,14 @@ def initialize_database() -> None:
                 excluded_companies TEXT NOT NULL DEFAULT '[]',
                 additional_limitations TEXT NOT NULL DEFAULT '',
                 cv_filename TEXT,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                CONSTRAINT fk_profiles_user
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS searches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL,
                 query TEXT NOT NULL,
                 status TEXT NOT NULL,
                 requested_results INTEGER NOT NULL DEFAULT 10,
@@ -105,12 +109,14 @@ def initialize_database() -> None:
                 warning TEXT,
                 error TEXT,
                 completed_at TEXT,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                CONSTRAINT fk_searches_user
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS job_offers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                search_id INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
+                search_id INTEGER NOT NULL,
                 result_type TEXT NOT NULL DEFAULT 'job',
                 title TEXT NOT NULL,
                 company TEXT NOT NULL,
@@ -118,30 +124,36 @@ def initialize_database() -> None:
                 summary TEXT NOT NULL,
                 score REAL NOT NULL,
                 matched_skills TEXT NOT NULL,
-                match_reasons TEXT NOT NULL
+                match_reasons TEXT NOT NULL,
+                CONSTRAINT fk_job_offers_search
+                    FOREIGN KEY (search_id) REFERENCES searches(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS user_offer_statuses (
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL,
                 url TEXT NOT NULL,
                 applied_at TEXT NOT NULL,
-                PRIMARY KEY (user_id, url)
+                PRIMARY KEY (user_id, url),
+                CONSTRAINT fk_user_offer_statuses_user
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS usage_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL,
                 operation TEXT NOT NULL,
                 model TEXT NOT NULL,
                 input_tokens INTEGER NOT NULL DEFAULT 0,
                 output_tokens INTEGER NOT NULL DEFAULT 0,
                 cost_usd REAL NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                CONSTRAINT fk_usage_events_user
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL,
                 session_id TEXT NOT NULL UNIQUE,
                 order_id INTEGER,
                 amount_grosz INTEGER NOT NULL,
@@ -149,18 +161,22 @@ def initialize_database() -> None:
                 method TEXT NOT NULL,
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                completed_at TEXT
+                completed_at TEXT,
+                CONSTRAINT fk_payments_user
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS balance_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL,
                 event_type TEXT NOT NULL,
                 delta_credits REAL NOT NULL,
                 amount_usd REAL,
                 eur_usd_rate REAL,
                 event_key TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                CONSTRAINT fk_balance_events_user
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
             """)
         user_columns = {
