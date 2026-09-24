@@ -85,9 +85,13 @@ For Przelewy24, keep `P24_SANDBOX=true` until the merchant flow and callbacks
 pass certification. The implementation uses the official transaction register
 and verify flow documented at <https://developers.przelewy24.pl/>.
 
-Configure SMTP to deliver Free-plan results. Without SMTP, the completed search
-remains visible in the dashboard and carries an explicit delivery warning.
-LangSmith tracing uses the standard `LANGSMITH_*` variables.
+Configure the Mailgun Messages API to deliver Free-plan results. Set
+`MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, and `MAILGUN_FROM` from the Mailgun domain
+settings. Keep `MAILGUN_REGION=US` for US domains or set it to `EU` for EU
+domains. Mailgun sandbox domains can send only to recipients authorized in the
+Mailgun control panel. Without Mailgun, the completed search remains visible in
+the dashboard and carries an explicit delivery warning. LangSmith tracing uses
+the standard `LANGSMITH_*` variables.
 
 ## Railway deployment
 

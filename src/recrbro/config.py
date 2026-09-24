@@ -58,12 +58,19 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv(
     "GOOGLE_REDIRECT_URI", f"{PUBLIC_API_URL}/api/auth/google/callback"
 )
-SMTP_HOST = os.getenv("SMTP_HOST")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USERNAME = os.getenv("SMTP_USERNAME")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-SMTP_FROM = os.getenv("SMTP_FROM", "RecrBro <noreply@recrbro.app>")
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").casefold() == "true"
+MAILGUN_API_KEY = os.getenv("MAILGUN_API_KEY")
+MAILGUN_DOMAIN = os.getenv("MAILGUN_DOMAIN")
+MAILGUN_REGION = os.getenv("MAILGUN_REGION", "US").strip().upper()
+if MAILGUN_REGION not in {"US", "EU"}:
+    raise ValueError("MAILGUN_REGION must be either US or EU.")
+MAILGUN_API_BASE_URL = (
+    "https://api.eu.mailgun.net"
+    if MAILGUN_REGION == "EU"
+    else "https://api.mailgun.net"
+)
+MAILGUN_FROM = os.getenv("MAILGUN_FROM") or (
+    f"RecrBro <postmaster@{MAILGUN_DOMAIN}>" if MAILGUN_DOMAIN else None
+)
 P24_MERCHANT_ID = os.getenv("P24_MERCHANT_ID")
 P24_POS_ID = os.getenv("P24_POS_ID")
 P24_API_KEY = os.getenv("P24_API_KEY")
