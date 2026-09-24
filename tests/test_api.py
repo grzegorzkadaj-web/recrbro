@@ -88,6 +88,23 @@ def test_database_startup_removes_persisted_collection_pages(
     assert remaining_urls == {"https://example.com/jobs/python-developer"}
 
 
+def test_database_startup_fails_interrupted_searches(client: TestClient) -> None:
+    search_id = db.create_search(2, "interrupted", requested_results=1)
+    with db.connection() as database:
+        database.execute(
+            "UPDATE searches SET created_at = '2026-01-01T00:00:00+00:00' WHERE id = ?",
+            (search_id,),
+        )
+
+    db.initialize_database()
+
+    search = db.get_search(search_id, 2)
+    assert search is not None
+    assert search.status == "failed"
+    assert search.error == "Search was interrupted before completion."
+    assert search.completed_at is not None
+
+
 def test_user_foreign_keys_cascade(client: TestClient) -> None:
     expected_foreign_keys = {
         "sessions": ("users", "user_id", "id"),

@@ -4,7 +4,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -250,6 +250,17 @@ def initialize_database() -> None:
                OR lower(url) LIKE '%/careers'
                OR lower(url) LIKE '%/vacancies'
             """)
+        stale_before = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+        database.execute(
+            """
+            UPDATE searches
+            SET status = 'failed',
+                error = 'Search was interrupted before completion.',
+                completed_at = ?
+            WHERE status = 'running' AND created_at < ?
+            """,
+            (_now(), stale_before),
+        )
         payment_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(payments)")
         }
