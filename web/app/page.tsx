@@ -76,6 +76,13 @@ type SearchResults = {
   current: SearchJob | null;
   archival: JobOffer[];
 };
+type ListProfileField =
+  | "core_skills"
+  | "other_skills"
+  | "languages"
+  | "contract_types"
+  | "excluded_companies";
+type ListDrafts = Record<ListProfileField, string>;
 
 const emptyProfile: Profile = {
   user_id: 0,
@@ -93,6 +100,27 @@ const emptyProfile: Profile = {
 
 function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function listDraftsFromProfile(profile: Profile): ListDrafts {
+  return {
+    core_skills: profile.core_skills.join(", "),
+    other_skills: profile.other_skills.join(", "),
+    languages: profile.languages.join(", "),
+    contract_types: profile.contract_types.join(", "),
+    excluded_companies: profile.excluded_companies.join(", "),
+  };
+}
+
+function profileWithListDrafts(profile: Profile, drafts: ListDrafts): Profile {
+  return {
+    ...profile,
+    core_skills: splitList(drafts.core_skills),
+    other_skills: splitList(drafts.other_skills),
+    languages: splitList(drafts.languages),
+    contract_types: splitList(drafts.contract_types),
+    excluded_companies: splitList(drafts.excluded_companies),
+  };
 }
 
 async function api<T>(
@@ -209,6 +237,9 @@ function Dashboard({
 }) {
   const [user, setUser] = useState(initialUser);
   const [profile, setProfile] = useState<Profile>(emptyProfile);
+  const [listDrafts, setListDrafts] = useState<ListDrafts>(
+    listDraftsFromProfile(emptyProfile),
+  );
   const [usage, setUsage] = useState<Usage>({
     input_tokens: 0,
     output_tokens: 0,
@@ -244,6 +275,11 @@ function Dashboard({
     }, 0);
   }, []);
 
+  const replaceProfile = useCallback((nextProfile: Profile) => {
+    setProfile(nextProfile);
+    setListDrafts(listDraftsFromProfile(nextProfile));
+  }, []);
+
   const refreshAccount = useCallback(async () => {
     const [loadedUser, loadedProfile, loadedUsage] = await Promise.all([
       api<User>("/api/me", token),
@@ -251,9 +287,9 @@ function Dashboard({
       api<Usage>("/api/usage", token),
     ]);
     setUser(loadedUser);
-    setProfile(loadedProfile);
+    replaceProfile(loadedProfile);
     setUsage(loadedUsage);
-  }, [token]);
+  }, [replaceProfile, token]);
 
   const refreshSearchResults = useCallback(async () => {
     const results = await api<SearchResults>("/api/searches/results", token);
@@ -292,6 +328,9 @@ function Dashboard({
     }),
     handler: async ({ coreSkills, location }) => {
       setProfile((current) => ({ ...current, core_skills: coreSkills ?? current.core_skills, location: location ?? current.location }));
+      if (coreSkills) {
+        setListDrafts((current) => ({ ...current, core_skills: coreSkills.join(", ") }));
+      }
       return "Updated the visible criteria for review.";
     },
   }, []);
@@ -300,18 +339,24 @@ function Dashboard({
     setProfile((current) => ({ ...current, [field]: value }));
   }
 
+  function updateListField(field: ListProfileField, value: string) {
+    setListDrafts((current) => ({ ...current, [field]: value }));
+    updateField(field, splitList(value));
+  }
+
   async function saveProfile() {
     setBusy(true);
     setWarning(null);
     setStatus("Saving your profile...");
     try {
-      const { user_id: _, cv_filename: __, ...payload } = profile;
+      const profileToSave = profileWithListDrafts(profile, listDrafts);
+      const { user_id: _, cv_filename: __, ...payload } = profileToSave;
       const savedProfile = await api<Profile>("/api/profile", token, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      setProfile(savedProfile);
+      replaceProfile(savedProfile);
       setStatus("Profile saved");
     } catch (error) {
       setWarning(error instanceof Error ? error.message : "Could not save profile.");
@@ -331,7 +376,7 @@ function Dashboard({
     form.append("file", file);
     try {
       const result = await api<{ profile: Profile; analysis_mode: "ai" | "local-fallback"; warning: string | null }>("/api/cv", token, { method: "POST", body: form });
-      setProfile(result.profile);
+      replaceProfile(result.profile);
       setWarning(result.warning);
       setStatus(result.analysis_mode === "ai" ? "CV analyzed with AI" : "CV parsed locally");
       await refreshAccount().catch(() => undefined);
@@ -355,13 +400,14 @@ function Dashboard({
     setSearchJob(null);
     setStatus("Preparing your search...");
     try {
-      const { user_id: _, cv_filename: __, ...payload } = profile;
+      const profileToSave = profileWithListDrafts(profile, listDrafts);
+      const { user_id: _, cv_filename: __, ...payload } = profileToSave;
       const savedProfile = await api<Profile>("/api/profile", token, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      setProfile(savedProfile);
+      replaceProfile(savedProfile);
 
       const job = await api<SearchJob>("/api/searches", token, {
         method: "POST",
@@ -459,7 +505,7 @@ function Dashboard({
             <button className="secondaryButton" onClick={saveProfile} disabled={busy}>Save profile</button>
           </div>
           <div className="formGrid">
-            <label className="wide"><span>Core skills</span><input value={profile.core_skills.join(", ")} onChange={(e) => updateField("core_skills", splitList(e.target.value))} placeholder="Python, FastAPI, SQL" /><small>Required matches and the strongest ranking signal.</small></label>
+            <label className="wide"><span>Core skills</span><input value={listDrafts.core_skills} onChange={(e) => updateListField("core_skills", e.target.value)} placeholder="Python, FastAPI, SQL" /><small>Required matches and the strongest ranking signal.</small></label>
             <label><span>Location</span><input value={profile.location} onChange={(e) => updateField("location", e.target.value)} placeholder="Poland" /></label>
             <label><span>Minimum monthly salary</span><input type="number" min="0" value={profile.minimum_salary ?? ""} onChange={(e) => updateField("minimum_salary", e.target.value ? Number(e.target.value) : null)} placeholder="18000" /></label>
             <fieldset className="workModes">
@@ -480,10 +526,10 @@ function Dashboard({
                 </label>
               ))}
             </fieldset>
-            <label><span>Contract type</span><input value={profile.contract_types.join(", ")} onChange={(e) => updateField("contract_types", splitList(e.target.value))} placeholder="B2B, employment" /></label>
-            <label className="wide"><span>Languages</span><input value={profile.languages.join(", ")} onChange={(e) => updateField("languages", splitList(e.target.value))} placeholder="English, Polish" /></label>
-            <label className="wide"><span>Other skills</span><input value={profile.other_skills.join(", ")} onChange={(e) => updateField("other_skills", splitList(e.target.value))} placeholder="Docker, Azure, mentoring" /></label>
-            <label className="wide"><span>Companies to exclude</span><input value={profile.excluded_companies.join(", ")} onChange={(e) => updateField("excluded_companies", splitList(e.target.value))} placeholder="Company A, Company B" /></label>
+            <label><span>Contract type</span><input value={listDrafts.contract_types} onChange={(e) => updateListField("contract_types", e.target.value)} placeholder="B2B, employment" /></label>
+            <label className="wide"><span>Languages</span><input value={listDrafts.languages} onChange={(e) => updateListField("languages", e.target.value)} placeholder="English, Polish" /></label>
+            <label className="wide"><span>Other skills</span><input value={listDrafts.other_skills} onChange={(e) => updateListField("other_skills", e.target.value)} placeholder="Docker, Azure, mentoring" /></label>
+            <label className="wide"><span>Companies to exclude</span><input value={listDrafts.excluded_companies} onChange={(e) => updateListField("excluded_companies", e.target.value)} placeholder="Company A, Company B" /></label>
             <label className="wide"><span>Additional requirements</span><textarea value={profile.additional_limitations} onChange={(e) => updateField("additional_limitations", e.target.value)} placeholder="I'm interested in jobs in Poland. No night shifts." /><small>High-priority requirements used while discovering and validating offers.</small></label>
           </div>
           <div className="cvCard">
