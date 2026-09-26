@@ -29,6 +29,7 @@ def accept_job_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
         return {
             url: services.JobAssessment(
                 candidate_id=index,
+                is_specific_offer=True,
                 is_active=True,
                 location_matches=True,
                 reason="Test fixture accepts the offer.",
@@ -632,12 +633,14 @@ def test_ai_assesses_activity_and_requested_location(
                     assessments=[
                         services.JobAssessment(
                             candidate_id=0,
+                            is_specific_offer=True,
                             is_active=False,
                             location_matches=True,
                             reason="Applications are not being accepted.",
                         ),
                         services.JobAssessment(
                             candidate_id=1,
+                            is_specific_offer=True,
                             is_active=True,
                             location_matches=False,
                             reason="Remote work is restricted to the United States.",
@@ -688,6 +691,7 @@ def test_ai_assesses_activity_and_requested_location(
     }
     assert not assessments["https://www.linkedin.com/jobs/view/1"].is_active
     assert not assessments["https://www.linkedin.com/jobs/view/2"].location_matches
+    assert "is_specific_offer=true only" in captured["messages"][0][1]
     assert '"requested_location": "Poland"' in captured["messages"][1][1]
     assert (
         '"candidate_requirements": "Do not include jobs based in Asia."'
@@ -725,6 +729,7 @@ def test_ai_assessment_batches_candidates_and_retries_missing_ids(
                     assessments=[
                         services.JobAssessment(
                             candidate_id=candidate_id,
+                            is_specific_offer=True,
                             is_active=True,
                             location_matches=True,
                             reason="Offer is active.",
@@ -801,6 +806,7 @@ def test_search_excludes_ai_rejected_offers(
         lambda _profile, results_by_url: {
             url: services.JobAssessment(
                 candidate_id=index,
+                is_specific_offer=True,
                 is_active=index != 0,
                 location_matches=index != 1,
                 reason="Rejected by AI validation.",
@@ -815,6 +821,41 @@ def test_search_excludes_ai_rejected_offers(
     assert response.json()["offers"] == []
     assert "2 non-detail, inactive, location-mismatched" in response.json()["warning"]
     assert "1 inactive, 1 location mismatches" in response.json()["warning"]
+
+
+def test_ai_rejects_pages_that_are_not_specific_job_offers(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = db.get_profile(2)
+    assert profile is not None
+    url = "https://example.com/services/hybrid-web-app-developers"
+    result = {
+        "title": "Find Hybrid Web App Developers",
+        "url": url,
+        "raw_content": (
+            "Hire vetted developers for your company. Choose a staffing plan "
+            "and receive candidate profiles."
+        ),
+    }
+    monkeypatch.setattr(
+        services,
+        "_assess_job_results",
+        lambda _profile, _results: {
+            url: services.JobAssessment(
+                candidate_id=0,
+                is_specific_offer=False,
+                is_active=True,
+                location_matches=True,
+                reason="This is a developer-hiring service, not a vacancy.",
+            )
+        },
+    )
+
+    offers, counts = services._build_job_offers(profile, {url: result}, set())
+
+    assert offers == []
+    assert counts["non_specific"] == 1
 
 
 def test_search_uses_tavily_content_when_direct_fetch_is_blocked(
@@ -1170,6 +1211,7 @@ def test_empty_location_preserves_additional_location_requirements(
                     assessments=[
                         services.JobAssessment(
                             candidate_id=0,
+                            is_specific_offer=True,
                             is_active=True,
                             location_matches=False,
                             reason="Model returned a restrictive location decision.",
@@ -1333,6 +1375,64 @@ def test_external_collection_pages_return_only_extracted_job_details(
     assert all(offer["result_type"] == "job" for offer in offers)
 
 
+def test_justjoin_collection_returns_only_extracted_job_details(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    accept_job_analysis: None,
+) -> None:
+    collection_url = "https://justjoin.it/job-offers/warszawa/php"
+    detail_url = (
+        "https://justjoin.it/job-offer/"
+        "agileengine-php-developer-warszawa-php-bde3b411"
+    )
+
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            assert api_key == "test-key"
+
+        def search(self, **_: object) -> dict:
+            return {
+                "results": [
+                    {
+                        "title": "Job offers php Warszawa | Just Join IT",
+                        "url": collection_url,
+                        "content": "Browse PHP job offers in Warszawa.",
+                        "raw_content": (
+                            '<a href="/job-offer/'
+                            'agileengine-php-developer-warszawa-php-bde3b411">'
+                            "PHP Developer - AgileEngine</a>"
+                            '<a href="/job-offers/warszawa/php">Browse PHP jobs</a>'
+                        ),
+                    }
+                ]
+            }
+
+        def extract(self, **kwargs: object) -> dict:
+            assert kwargs["urls"] == [detail_url]
+            return {
+                "results": [
+                    {
+                        "url": detail_url,
+                        "raw_content": (
+                            "PHP Developer. Work from Warszawa or remotely in Poland. "
+                            "Apply now."
+                        ),
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
+    monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
+
+    response = client.post("/api/users/2/search", json={"max_results": 2})
+
+    assert response.status_code == 200
+    offers = response.json()["offers"]
+    assert [offer["url"] for offer in offers] == [detail_url]
+    assert all(offer["result_type"] == "job" for offer in offers)
+    assert collection_url not in {offer["url"] for offer in offers}
+
+
 @pytest.mark.parametrize(
     ("title", "url"),
     [
@@ -1345,10 +1445,43 @@ def test_external_collection_pages_return_only_extracted_job_details(
             "Flexible Remote PHP Developer Europe Jobs – Apply Today",
             "https://www.indeed.com/q-remote-php-developer-europe-jobs.html",
         ),
+        (
+            "Job offers php Warszawa | Just Join IT",
+            "https://justjoin.it/job-offers/warszawa/php",
+        ),
+        (
+            "Hire Hybrid Web Apps Developers",
+            "https://arc.dev/hire-developers/hybrid-web-apps",
+        ),
+        (
+            "Job offers python Berlin",
+            "https://jobs.example.dev/job-offers/berlin/python",
+        ),
+        (
+            "Hire PHP Developers On Demand",
+            "https://talent.example.com/hire/php-developers",
+        ),
     ],
 )
 def test_job_board_search_pages_are_collections(title: str, url: str) -> None:
     assert services._looks_like_collection({"title": title, "url": url})
+
+
+@pytest.mark.parametrize(
+    ("title", "url"),
+    [
+        (
+            "PHP Developer - AgileEngine",
+            "https://justjoin.it/job-offer/agileengine-php-developer-warszawa-php",
+        ),
+        (
+            "Senior Python Developer",
+            "https://example.com/careers/senior-python-developer",
+        ),
+    ],
+)
+def test_specific_offer_pages_are_not_collections(title: str, url: str) -> None:
+    assert not services._looks_like_collection({"title": title, "url": url})
 
 
 def test_collection_without_links_uses_domain_search_for_job_details(
