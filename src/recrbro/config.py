@@ -53,11 +53,7 @@ SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "168"))
 SEED_DEMO_USERS = os.getenv("SEED_DEMO_USERS", "true").casefold() == "true"
 APP_ENV = os.getenv("APP_ENV", "development")
 APP_SECRET = os.getenv("APP_SECRET", "development-only-change-me")
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-GOOGLE_REDIRECT_URI = os.getenv(
-    "GOOGLE_REDIRECT_URI", f"{PUBLIC_API_URL}/api/auth/google/callback"
-)
+TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY")
 P24_MERCHANT_ID = os.getenv("P24_MERCHANT_ID")
 P24_POS_ID = os.getenv("P24_POS_ID")
 P24_API_KEY = os.getenv("P24_API_KEY")

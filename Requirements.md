@@ -6,7 +6,7 @@ Workers are wasting time on searching for a job offers that are not matched or n
 # Vision
 The main goal is to help employees to find a job as fast as possible. 
 # Main flow
-- log in with Google Account or create a account
+- create an account with email/password and CAPTCHA verification
 - load CV in PDF
 - provide additional criteria
 - choose a pricing plan: free or premium
@@ -96,7 +96,7 @@ It should implement sorting strategy according to the following criteria: skills
 
 # Implemented product scope
 - FastAPI backend with a Next.js website
-- authenticated email/password accounts and optional Google OAuth
+- authenticated email/password accounts with CAPTCHA-protected registration
 - optional seeded demo users for local development only
 - Premium users can upload a PDF CV for profile extraction
 - live multi-source job discovery is performed through Tavily

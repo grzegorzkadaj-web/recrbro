@@ -531,8 +531,7 @@ textarea:focus {
   gap: 8px;
 }
 
-.upgradeBox button,
-.googleButton {
+.upgradeBox button {
   padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 9px;
@@ -839,29 +838,8 @@ footer {
   color: white;
 }
 
-.divider {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 22px 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.divider::before,
-.divider::after {
-  height: 1px;
-  flex: 1;
-  background: var(--line);
-  content: "";
-}
-
-.googleButton {
-  display: block;
-  border-color: var(--line);
-  color: var(--ink);
-  text-align: center;
-  text-decoration: none;
+.turnstileContainer {
+  min-height: 65px;
 }
 
 .authCard > .textButton {

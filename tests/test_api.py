@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs
 
 import pytest
 from fastapi.testclient import TestClient
 
 from recrbro import api as api_module
+from recrbro import auth as auth_module
 from recrbro import db, services
 from recrbro.api import app
 from recrbro.config import _normalized_origins
@@ -17,6 +20,11 @@ from recrbro.config import _normalized_origins
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test.db")
     monkeypatch.setattr(db, "eur_usd_rate", lambda: 1.25)
+    monkeypatch.setattr(
+        api_module,
+        "verify_turnstile",
+        lambda token, _remote_ip: token == "test-captcha-token",
+    )
     with TestClient(app) as test_client:
         yield test_client
 
@@ -222,6 +230,7 @@ def test_user_can_register_and_access_own_profile(client: TestClient) -> None:
             "name": "Ada Candidate",
             "email": "ada@example.com",
             "password": "correct-horse-battery",
+            "captcha_token": "test-captcha-token",
         },
     )
 
@@ -249,6 +258,92 @@ def test_user_can_register_and_access_own_profile(client: TestClient) -> None:
     assert history.json()[0]["delta_credits"] == 0.1
 
 
+def test_registration_requires_valid_captcha(client: TestClient) -> None:
+    missing = client.post(
+        "/api/auth/register",
+        json={
+            "name": "Missing Captcha",
+            "email": "missing-captcha@example.com",
+            "password": "correct-horse-battery",
+        },
+    )
+    invalid = client.post(
+        "/api/auth/register",
+        json={
+            "name": "Invalid Captcha",
+            "email": "invalid-captcha@example.com",
+            "password": "correct-horse-battery",
+            "captcha_token": "invalid",
+        },
+    )
+
+    assert missing.status_code == 422
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"] == "CAPTCHA verification failed. Please try again."
+    assert db.get_user_by_email("invalid-captcha@example.com") is None
+
+
+def test_registration_reports_captcha_provider_failure(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unavailable(_token: str, _remote_ip: str | None) -> bool:
+        raise RuntimeError("CAPTCHA verification is temporarily unavailable.")
+
+    monkeypatch.setattr(api_module, "verify_turnstile", unavailable)
+
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "name": "Provider Failure",
+            "email": "provider-failure@example.com",
+            "password": "correct-horse-battery",
+            "captcha_token": "test-captcha-token",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "CAPTCHA verification is temporarily unavailable."
+    )
+
+
+def test_turnstile_verification_posts_secret_token_and_remote_ip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def verify(request: object, timeout: int) -> BytesIO:
+        captured["url"] = request.full_url
+        captured["fields"] = parse_qs(request.data.decode())
+        captured["timeout"] = timeout
+        return BytesIO(json.dumps({"success": True, "action": "register"}).encode())
+
+    monkeypatch.setattr(auth_module, "TURNSTILE_SECRET_KEY", "test-secret")
+    monkeypatch.setattr(auth_module, "urlopen", verify)
+
+    assert auth_module.verify_turnstile("browser-token", "203.0.113.10")
+    assert captured == {
+        "url": auth_module.TURNSTILE_VERIFY_URL,
+        "fields": {
+            "secret": ["test-secret"],
+            "response": ["browser-token"],
+            "remoteip": ["203.0.113.10"],
+        },
+        "timeout": 10,
+    }
+
+
+def test_google_authentication_routes_are_removed(client: TestClient) -> None:
+    assert client.get("/api/auth/google/start").status_code == 404
+    assert (
+        client.get(
+            "/api/auth/google/callback",
+            params={"code": "code", "state": "state"},
+        ).status_code
+        == 404
+    )
+
+
 def test_free_account_search_runs_immediately(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -258,6 +353,7 @@ def test_free_account_search_runs_immediately(
             "name": "Queue Tester",
             "email": "queue@example.com",
             "password": "correct-horse-battery",
+            "captcha_token": "test-captcha-token",
         },
     ).json()
     headers = {"Authorization": f"Bearer {registration['token']}"}
@@ -1112,6 +1208,7 @@ def test_credit_exhaustion_downgrades_and_payment_restores(
             "name": "Credit Tester",
             "email": "credits@example.com",
             "password": "correct-horse-battery",
+            "captcha_token": "test-captcha-token",
         },
     ).json()
     user_id = registration["user"]["id"]
@@ -1238,6 +1335,7 @@ def test_user_can_mark_offer_applied_across_search_history(
             "name": "Application Tracker",
             "email": "applications@example.com",
             "password": "correct-horse-battery",
+            "captcha_token": "test-captcha-token",
         },
     ).json()
     user_id = registration["user"]["id"]

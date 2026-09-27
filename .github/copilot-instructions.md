@@ -39,7 +39,8 @@ strict TypeScript no-emit check rather than ESLint.
 - `src/recrbro/db.py` owns SQLite schema creation, seed data, and persistence.
 - `src/recrbro/services.py` owns PDF extraction, optional AI CV analysis, Tavily
   search, and deterministic result ranking.
-- `src/recrbro/auth.py` owns password hashing, opaque sessions, and Google OAuth.
+- `src/recrbro/auth.py` owns password hashing, opaque sessions, and Turnstile
+  registration verification.
 - `src/recrbro/payments.py` owns Przelewy24 registration and verification.
 - `src/recrbro/agent.py` exposes the LangGraph agent through AG-UI at `/agent`.
 - `web/app/api/copilotkit/route.ts` is the CopilotKit Runtime proxy between the

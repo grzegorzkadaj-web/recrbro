@@ -7,7 +7,7 @@ remaining roles against the candidate's requirements.
 
 ## Product behavior
 
-- Email/password accounts and Google OAuth sign-in.
+- Email/password accounts with Cloudflare Turnstile-protected registration.
 - New accounts start on Free with 0.1 credit. Free accounts can upload a PDF CV
   and run immediate searches with up to ten results each.
 - A verified 2 EUR Przelewy24/BLIK payment adds four credits and restores
@@ -116,8 +116,12 @@ Generate a strong value for `APP_SECRET`. Set `APP_ENV=production`,
 `RECRBRO_DATABASE_PATH=/data/recrbro.db`, and all provider credentials listed
 in `.env.example`.
 
-For Google sign-in, register
-`https://<api-host>/api/auth/google/callback` as an authorized redirect URI.
+Create a Cloudflare Turnstile widget for the frontend hostname. Set its site key
+as `NEXT_PUBLIC_TURNSTILE_SITE_KEY` on the web service and its secret key as
+`TURNSTILE_SECRET_KEY` on the API service. Registration is unavailable when
+either side is not configured. The example environment files use Cloudflare's
+official always-pass test keys for local development; replace both keys in
+production.
 For Przelewy24, keep `P24_SANDBOX=true` until the merchant flow and callbacks
 pass certification. The implementation uses the official transaction register
 and verify flow documented at <https://developers.przelewy24.pl/>.
@@ -148,10 +152,11 @@ volume for the single SQLite writer.
 3. Set `FRONTEND_ORIGINS` on the API to the web service's exact HTTPS origin
    (for example, `https://web-production-web.up.railway.app`) and
    `PUBLIC_API_URL` to the API's exact HTTPS origin. Multiple allowed web
-   origins can be comma-separated; the first is used for OAuth and payment
+   origins can be comma-separated; the first is used for payment
    redirects. The legacy singular `FRONTEND_ORIGIN` remains supported.
-4. Map custom domains, update the Google and Przelewy24 callback URLs, run a
-   sandbox payment, and verify `/health` before enabling production payments.
+4. Map custom domains, update the Turnstile hostname and Przelewy24 callback
+   URLs, run a sandbox payment, and verify `/health` before enabling production
+   payments.
 5. Back up `/data/recrbro.db` regularly. Railway volumes are persistent, but
    application-level backup and restore drills remain your responsibility.
 

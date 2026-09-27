@@ -87,7 +87,6 @@ def initialize_database() -> None:
                 name TEXT NOT NULL,
                 email TEXT NOT NULL UNIQUE,
                 password_hash TEXT,
-                google_subject TEXT UNIQUE,
                 plan TEXT NOT NULL CHECK (plan IN ('free', 'premium')),
                 result_limit INTEGER NOT NULL,
                 monthly_budget_pln REAL NOT NULL,
@@ -209,8 +208,6 @@ def initialize_database() -> None:
         }
         if "password_hash" not in user_columns:
             database.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
-        if "google_subject" not in user_columns:
-            database.execute("ALTER TABLE users ADD COLUMN google_subject TEXT")
         if "credits_bought_usd" not in user_columns:
             database.execute(
                 "ALTER TABLE users ADD COLUMN credits_bought_usd REAL NOT NULL DEFAULT 0"
@@ -501,40 +498,6 @@ def create_user(name: str, email: str, password_hash: str | None = None) -> User
     user = get_user(user_id)
     if user is None:
         raise LookupError("Created user could not be loaded.")
-    return user
-
-
-def set_google_identity(subject: str, name: str, email: str) -> User:
-    existing = get_user_by_email(email)
-    if isinstance(existing, User):
-        with connection() as database:
-            database.execute(
-                "UPDATE users SET google_subject = ? WHERE id = ?",
-                (subject, existing.id),
-            )
-        return existing
-    with connection() as database:
-        cursor = database.execute(
-            """
-            INSERT INTO users
-                (name, email, google_subject, plan, result_limit,
-                 monthly_budget_pln, credits_bought_usd, created_at)
-            VALUES (?, ?, ?, 'free', 10, 0, 0, ?)
-            """,
-            (name, email, subject, _now()),
-        )
-        user_id = int(cursor.lastrowid)
-        _record_balance_event(
-            database,
-            user_id,
-            "starter_credit",
-            FREE_STARTING_CREDITS,
-            f"starter-credit:{user_id}",
-        )
-        _insert_default_profile(database, user_id)
-    user = get_user(user_id)
-    if user is None:
-        raise LookupError("Google user could not be loaded.")
     return user
 
 

@@ -1,30 +1,25 @@
 from __future__ import annotations
 
-import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import (
-    Cookie,
     Depends,
     FastAPI,
     File,
     HTTPException,
+    Request,
     UploadFile,
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from recrbro.agent import add_agent_endpoint
 from recrbro.auth import (
-    authenticate_google,
-    create_oauth_state,
-    google_authorization_url,
-    google_success_redirect,
     login_user,
     register_user,
-    verify_oauth_state,
+    verify_turnstile,
 )
 from recrbro.config import (
     APP_ENV,
@@ -146,7 +141,19 @@ def health() -> dict[str, str]:
 
 
 @app.post("/api/auth/register", response_model=AuthResponse, status_code=201)
-def register(payload: RegisterRequest) -> AuthResponse:
+def register(payload: RegisterRequest, request: Request) -> AuthResponse:
+    try:
+        captcha_verified = verify_turnstile(
+            payload.captcha_token,
+            request.client.host if request.client else None,
+        )
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    if not captcha_verified:
+        raise HTTPException(
+            status_code=400,
+            detail="CAPTCHA verification failed. Please try again.",
+        )
     try:
         token, user = register_user(payload.name, payload.email, payload.password)
     except ValueError as error:
@@ -169,43 +176,6 @@ def logout(
 ) -> None:
     if credentials:
         delete_session(credentials.credentials)
-
-
-@app.get("/api/auth/google/start")
-def google_start() -> RedirectResponse:
-    try:
-        state = create_oauth_state()
-        response = RedirectResponse(google_authorization_url(state))
-        response.set_cookie(
-            "recrbro_oauth_state",
-            state,
-            max_age=600,
-            httponly=True,
-            secure=APP_ENV == "production",
-            samesite="lax",
-        )
-        return response
-    except RuntimeError as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
-
-
-@app.get("/api/auth/google/callback")
-def google_callback(
-    code: str, state: str, recrbro_oauth_state: str | None = Cookie(default=None)
-) -> RedirectResponse:
-    if (
-        not recrbro_oauth_state
-        or not secrets.compare_digest(state, recrbro_oauth_state)
-        or not verify_oauth_state(state)
-    ):
-        raise HTTPException(status_code=400, detail="Invalid OAuth state.")
-    try:
-        token, _ = authenticate_google(code)
-    except (RuntimeError, ValueError) as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    response = RedirectResponse(google_success_redirect(token))
-    response.delete_cookie("recrbro_oauth_state")
-    return response
 
 
 @app.get("/api/me", response_model=User)

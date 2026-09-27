@@ -63,7 +63,6 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT,
-    google_subject TEXT UNIQUE,
     plan TEXT NOT NULL CHECK (plan IN ('free', 'premium')),
     result_limit INTEGER NOT NULL,
     monthly_budget_pln REAL NOT NULL,

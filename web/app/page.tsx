@@ -15,7 +15,30 @@ import {
 import { z } from "zod";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
 const SESSION_KEY = "recrbro_session";
+const TURNSTILE_SCRIPT_ID = "cloudflare-turnstile-script";
+
+type TurnstileApi = {
+  render: (
+    container: HTMLElement,
+    options: {
+      sitekey: string;
+      action: string;
+      callback: (token: string) => void;
+      "error-callback": () => void;
+      "expired-callback": () => void;
+      "timeout-callback": () => void;
+    },
+  ) => string;
+  remove: (widgetId: string) => void;
+};
+
+declare global {
+  interface Window {
+    turnstile?: TurnstileApi;
+  }
+}
 
 type Plan = "free" | "premium";
 type WorkMode = "remote" | "on-site" | "hybrid";
@@ -196,16 +219,105 @@ function Logo() {
   );
 }
 
+function TurnstileWidget({
+  onToken,
+  onError,
+}: {
+  onToken: (token: string | null) => void;
+  onError: (message: string) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const widgetIdRef = useRef<string | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    if (window.turnstile) {
+      setReady(true);
+      return;
+    }
+
+    let script = document.getElementById(
+      TURNSTILE_SCRIPT_ID,
+    ) as HTMLScriptElement | null;
+    const handleLoad = () => setReady(true);
+    const handleError = () =>
+      onError("CAPTCHA could not be loaded. Please refresh and try again.");
+
+    if (!script) {
+      script = document.createElement("script");
+      script.id = TURNSTILE_SCRIPT_ID;
+      script.src =
+        "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+    script.addEventListener("load", handleLoad);
+    script.addEventListener("error", handleError);
+    return () => {
+      script?.removeEventListener("load", handleLoad);
+      script?.removeEventListener("error", handleError);
+    };
+  }, [onError]);
+
+  useEffect(() => {
+    if (
+      !ready ||
+      !window.turnstile ||
+      !containerRef.current ||
+      widgetIdRef.current
+    ) {
+      return;
+    }
+    widgetIdRef.current = window.turnstile.render(containerRef.current, {
+      sitekey: TURNSTILE_SITE_KEY,
+      action: "register",
+      callback: (token) => onToken(token),
+      "error-callback": () => {
+        onToken(null);
+        onError("CAPTCHA verification failed. Please try again.");
+      },
+      "expired-callback": () => onToken(null),
+      "timeout-callback": () => onToken(null),
+    });
+    return () => {
+      if (widgetIdRef.current && window.turnstile) {
+        window.turnstile.remove(widgetIdRef.current);
+        widgetIdRef.current = null;
+      }
+    };
+  }, [onError, onToken, ready]);
+
+  return <div className="turnstileContainer" ref={containerRef} />;
+}
+
 function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user: User) => void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaVersion, setCaptchaVersion] = useState(0);
+  const handleCaptchaToken = useCallback((token: string | null) => {
+    setCaptchaToken(token);
+    if (token) setError(null);
+  }, []);
+  const handleCaptchaError = useCallback((message: string) => {
+    setError(message);
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (mode === "register" && !captchaToken) {
+      setError("Complete the CAPTCHA before creating your account.");
+      return;
+    }
     setBusy(true);
     setError(null);
     const form = new FormData(event.currentTarget);
+    const credentials = {
+      email: form.get("email"),
+      password: form.get("password"),
+    };
     try {
       const result = await api<{ token: string; user: User }>(
         mode === "login" ? "/api/auth/login" : "/api/auth/register",
@@ -213,19 +325,34 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: form.get("name"),
-            email: form.get("email"),
-            password: form.get("password"),
-          }),
+          body: JSON.stringify(
+            mode === "login"
+              ? credentials
+              : {
+                  ...credentials,
+                  name: form.get("name"),
+                  captcha_token: captchaToken,
+                },
+          ),
         },
       );
       onAuthenticated(result.token, result.user);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not sign in.");
+      if (mode === "register") {
+        setCaptchaToken(null);
+        setCaptchaVersion((version) => version + 1);
+      }
     } finally {
       setBusy(false);
     }
+  }
+
+  function switchMode() {
+    setMode(mode === "login" ? "register" : "login");
+    setError(null);
+    setCaptchaToken(null);
+    setCaptchaVersion((version) => version + 1);
   }
 
   return (
@@ -255,17 +382,32 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
             )}
             <label><span>Email</span><input name="email" type="email" autoComplete="email" required /></label>
             <label><span>Password</span><input name="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required minLength={10} /></label>
+            {mode === "register" && TURNSTILE_SITE_KEY && (
+              <TurnstileWidget
+                key={captchaVersion}
+                onToken={handleCaptchaToken}
+                onError={handleCaptchaError}
+              />
+            )}
+            {mode === "register" && !TURNSTILE_SITE_KEY && (
+              <div className="notice compact" role="alert">
+                Registration CAPTCHA is not configured.
+              </div>
+            )}
             {error && <div className="notice compact" role="alert">{error}</div>}
-            <button className="primaryButton" disabled={busy}>
+            <button
+              className="primaryButton"
+              disabled={
+                busy ||
+                (mode === "register" &&
+                  (!TURNSTILE_SITE_KEY || !captchaToken))
+              }
+            >
               {busy ? "Please wait..." : mode === "login" ? "Sign in" : "Create free account"}
               <span>→</span>
             </button>
           </form>
-          <div className="divider"><span>or</span></div>
-          <a className="googleButton" href={`${API_URL}/api/auth/google/start`}>
-            Continue with Google
-          </a>
-          <button className="textButton" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+          <button className="textButton" onClick={switchMode}>
             {mode === "login" ? "New here? Create an account" : "Already have an account? Sign in"}
           </button>
         </div>
@@ -644,13 +786,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fragment = new URLSearchParams(window.location.hash.slice(1));
-    const oauthToken = fragment.get("session");
-    if (oauthToken) {
-      localStorage.setItem(SESSION_KEY, oauthToken);
-      history.replaceState(null, "", window.location.pathname);
-    }
-    const token = oauthToken ?? localStorage.getItem(SESSION_KEY);
+    const token = localStorage.getItem(SESSION_KEY);
     if (!token) {
       setLoading(false);
       return;

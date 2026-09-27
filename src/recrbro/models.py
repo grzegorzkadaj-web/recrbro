@@ -28,6 +28,7 @@ class AuthRequest(BaseModel):
 
 class RegisterRequest(AuthRequest):
     name: str = Field(min_length=2, max_length=100)
+    captcha_token: str = Field(min_length=1, max_length=2048)
 
 
 class AuthResponse(BaseModel):

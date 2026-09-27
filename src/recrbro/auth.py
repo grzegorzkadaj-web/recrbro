@@ -6,24 +6,16 @@ import hmac
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
+from json import JSONDecodeError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from recrbro.config import (
-    APP_SECRET,
-    FRONTEND_ORIGIN,
-    GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET,
-    GOOGLE_REDIRECT_URI,
-    SESSION_TTL_HOURS,
-)
-from recrbro.db import (
-    create_session,
-    create_user,
-    get_user_by_email,
-    set_google_identity,
-)
+from recrbro.config import SESSION_TTL_HOURS, TURNSTILE_SECRET_KEY
+from recrbro.db import create_session, create_user, get_user_by_email
 from recrbro.models import User
+
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 
 def hash_password(password: str) -> str:
@@ -82,77 +74,30 @@ def login_user(email: str, password: str) -> tuple[str, User]:
     return issue_session(user.id), user
 
 
-def google_authorization_url(state: str) -> str:
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        raise RuntimeError("Google sign-in is not configured.")
-    return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(
-        {
-            "client_id": GOOGLE_CLIENT_ID,
-            "redirect_uri": GOOGLE_REDIRECT_URI,
-            "response_type": "code",
-            "scope": "openid email profile",
-            "state": state,
-            "prompt": "select_account",
-        }
-    )
-
-
-def create_oauth_state() -> str:
-    timestamp = str(int(datetime.now(timezone.utc).timestamp()))
-    nonce = secrets.token_urlsafe(16)
-    value = f"{timestamp}.{nonce}"
-    signature = hmac.new(
-        APP_SECRET.encode(), value.encode(), hashlib.sha256
-    ).hexdigest()
-    return f"{value}.{signature}"
-
-
-def verify_oauth_state(state: str) -> bool:
-    try:
-        timestamp, nonce, signature = state.split(".", 2)
-        value = f"{timestamp}.{nonce}"
-        expected = hmac.new(
-            APP_SECRET.encode(), value.encode(), hashlib.sha256
-        ).hexdigest()
-        age = datetime.now(timezone.utc).timestamp() - int(timestamp)
-    except (ValueError, TypeError):
-        return False
-    return 0 <= age <= 600 and hmac.compare_digest(signature, expected)
-
-
-def authenticate_google(code: str) -> tuple[str, User]:
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        raise RuntimeError("Google sign-in is not configured.")
-    token_request = Request(
-        "https://oauth2.googleapis.com/token",
-        data=urlencode(
-            {
-                "code": code,
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri": GOOGLE_REDIRECT_URI,
-                "grant_type": "authorization_code",
-            }
-        ).encode(),
+def verify_turnstile(token: str, remote_ip: str | None = None) -> bool:
+    if not TURNSTILE_SECRET_KEY:
+        raise RuntimeError("CAPTCHA verification is not configured.")
+    fields = {"secret": TURNSTILE_SECRET_KEY, "response": token}
+    if remote_ip:
+        fields["remoteip"] = remote_ip
+    request = Request(
+        TURNSTILE_VERIFY_URL,
+        data=urlencode(fields).encode(),
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    with urlopen(token_request, timeout=20) as response:
-        access_token = json.load(response)["access_token"]
-    user_request = Request(
-        "https://openidconnect.googleapis.com/v1/userinfo",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    with urlopen(user_request, timeout=20) as response:
-        identity = json.load(response)
-    if not identity.get("email") or not identity.get("email_verified"):
-        raise ValueError("Google did not return a verified email address.")
-    user = set_google_identity(
-        str(identity["sub"]),
-        str(identity.get("name") or identity["email"].split("@", 1)[0]),
-        str(identity["email"]).casefold(),
-    )
-    return issue_session(user.id), user
-
-
-def google_success_redirect(token: str) -> str:
-    return f"{FRONTEND_ORIGIN}/#session={token}"
+    try:
+        with urlopen(request, timeout=10) as response:
+            result = json.load(response)
+    except (
+        HTTPError,
+        URLError,
+        TimeoutError,
+        JSONDecodeError,
+        UnicodeError,
+    ) as error:
+        raise RuntimeError(
+            "CAPTCHA verification is temporarily unavailable."
+        ) from error
+    if not isinstance(result, dict):
+        raise RuntimeError("CAPTCHA verification returned an invalid response.")
+    return result.get("success") is True and result.get("action") == "register"
