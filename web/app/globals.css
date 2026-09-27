@@ -157,10 +157,6 @@ main {
 }
 
 .hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 80px;
-  align-items: end;
   padding: 86px 0 62px;
 }
 
@@ -192,24 +188,39 @@ h1 {
   line-height: 1.65;
 }
 
-.statusCard {
+.searchStatus {
   display: flex;
   align-items: flex-start;
   gap: 14px;
-  padding: 20px;
-  border: 1px solid rgba(20, 42, 43, 0.1);
-  border-radius: 18px;
-  background: rgba(255, 254, 249, 0.72);
+  min-height: 82px;
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.06);
 }
 
-.statusCard strong,
-.statusCard small {
+.searchStatus.active {
+  border-color: rgba(185, 244, 213, 0.42);
+  background: rgba(185, 244, 213, 0.1);
+}
+
+.searchStatus > div {
+  min-width: 0;
+}
+
+.searchStatus strong,
+.searchStatus small {
   display: block;
 }
 
-.statusCard small {
+.searchStatus strong {
+  line-height: 1.35;
+}
+
+.searchStatus small {
   margin-top: 5px;
-  color: var(--muted);
+  color: #b8c3c2;
   line-height: 1.4;
 }
 

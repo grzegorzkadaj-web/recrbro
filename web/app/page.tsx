@@ -9,7 +9,6 @@ import {
   FormEvent,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -83,6 +82,55 @@ type ListProfileField =
   | "contract_types"
   | "excluded_companies";
 type ListDrafts = Record<ListProfileField, string>;
+type SearchProgressMessage = {
+  title: string;
+  detail: string;
+};
+
+const SEARCH_PROGRESS_MESSAGES: SearchProgressMessage[] = [
+  {
+    title: "Preparing focused search queries",
+    detail: "Using your core skills, location, and preferences to target relevant roles.",
+  },
+  {
+    title: "Searching live job sources",
+    detail: "Looking across employer sites and job boards for individual offers.",
+  },
+  {
+    title: "Opening candidate offer pages",
+    detail: "Collecting the full job details instead of relying on search snippets.",
+  },
+  {
+    title: "Checking links and active status",
+    detail: "Removing expired, closed, redirected, and duplicate offers.",
+  },
+  {
+    title: "Validating location and work mode",
+    detail: "Checking each role against where and how you want to work.",
+  },
+  {
+    title: "Comparing offers with your core skills",
+    detail: "Giving the strongest weight to the experience you marked as essential.",
+  },
+  {
+    title: "Reviewing your additional requirements",
+    detail: "Checking contract, salary, exclusions, languages, and other priorities.",
+  },
+  {
+    title: "Calculating match strength",
+    detail: "Balancing matching points with important gaps for every verified offer.",
+  },
+  {
+    title: "Sorting your strongest matches",
+    detail: "Comparing qualified offers consistently before building your shortlist.",
+  },
+  {
+    title: "Preparing your verified shortlist",
+    detail: "Final checks are in progress. Complex searches can take a few minutes.",
+  },
+];
+
+const RANKING_PROGRESS_START = 5;
 
 const emptyProfile: Profile = {
   user_id: 0,
@@ -254,17 +302,12 @@ function Dashboard({
   const [status, setStatus] = useState("Loading your profile...");
   const [warning, setWarning] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
   const [searchJob, setSearchJob] = useState<SearchJob | null>(null);
   const [progressStep, setProgressStep] = useState(0);
   const noticeRef = useRef<HTMLDivElement>(null);
   const resultsRef = useRef<HTMLElement>(null);
-  const progressMessages = useMemo(() => [
-    "Preparing focused search queries",
-    "Discovering job offers across the web",
-    "Checking links and active status",
-    "Validating location eligibility",
-    "Ranking your strongest matches",
-  ], []);
+  const progressMessage = SEARCH_PROGRESS_MESSAGES[progressStep];
 
   const scrollToOutcome = useCallback((hasError: boolean) => {
     window.setTimeout(() => {
@@ -306,13 +349,17 @@ function Dashboard({
   }, [refreshAccount, refreshSearchResults]);
 
   useEffect(() => {
-    if (!busy) return;
+    if (!isSearching) return;
     const timer = window.setInterval(
-      () => setProgressStep((step) => Math.min(step + 1, progressMessages.length - 1)),
-      2600,
+      () => setProgressStep((step) => (
+        step === SEARCH_PROGRESS_MESSAGES.length - 1
+          ? RANKING_PROGRESS_START
+          : step + 1
+      )),
+      4000,
     );
     return () => window.clearInterval(timer);
-  }, [busy, progressMessages.length]);
+  }, [isSearching]);
 
   useAgentContext({
     description: "Current RecrBro account, profile, requested result count, and visible job matches.",
@@ -391,6 +438,7 @@ function Dashboard({
 
   async function runSearch() {
     setBusy(true);
+    setIsSearching(true);
     setArchivalOffers((current) => Array.from(
       new Map([...offers, ...current].map((offer) => [offer.url, offer])).values(),
     ));
@@ -421,12 +469,14 @@ function Dashboard({
       await refreshSearchResults();
       setWarning(job.warning);
       setStatus(`Found ${job.offers.length} ranked matches`);
+      setIsSearching(false);
       setBusy(false);
       await refreshAccount().catch(() => undefined);
       scrollToOutcome(false);
     } catch (error) {
       setWarning(error instanceof Error ? error.message : "Search failed.");
       setStatus("Search failed");
+      setIsSearching(false);
       setBusy(false);
       await refreshAccount().catch(() => undefined);
       scrollToOutcome(true);
@@ -487,13 +537,6 @@ function Dashboard({
           <h1>Less scrolling.<br />Better-fit roles.</h1>
           <p className="heroCopy">Shape your profile once. RecrBro discovers, verifies, and ranks live job pages around what matters most.</p>
         </div>
-        <div className="statusCard" aria-live="polite">
-          <span className={busy ? "pulse" : "statusDot"} />
-          <div>
-            <strong>{busy ? progressMessages[progressStep] : status}</strong>
-            <small>{user.result_limit} results per search · {usage.available_credits.toFixed(2)} credits left</small>
-          </div>
-        </div>
       </section>
 
       {warning && <div className="notice" ref={noticeRef} role="alert"><strong>Heads up</strong><span>{warning}</span><button onClick={() => setWarning(null)} aria-label="Dismiss notice">×</button></div>}
@@ -543,7 +586,21 @@ function Dashboard({
           <p>Core skills shape discovery. Your remaining profile criteria refine ranking and eligibility.</p>
           <label><span>Maximum results</span><input type="range" min="1" max={user.result_limit} value={Math.min(maxResults, user.result_limit)} onChange={(e) => setMaxResults(Number(e.target.value))} /></label>
           <div className="resultCount"><strong>{Math.min(maxResults, user.result_limit)}</strong><span>offers</span></div>
-          <button className="primaryButton" onClick={runSearch} disabled={busy}>{busy ? "Working..." : "Search job sources"}<span>↗</span></button>
+          <button className="primaryButton" onClick={runSearch} disabled={busy}>
+            {isSearching ? "Searching job sources..." : busy ? "Please wait..." : "Search job sources"}
+            <span>{isSearching ? "●" : "↗"}</span>
+          </button>
+          <div className={`searchStatus${isSearching ? " active" : ""}`} aria-live="polite" aria-atomic="true">
+            <span className={isSearching ? "pulse" : "statusDot"} />
+            <div>
+              <strong>{isSearching ? progressMessage.title : status}</strong>
+              <small>
+                {isSearching
+                  ? progressMessage.detail
+                  : `${user.result_limit} results per search · ${usage.available_credits.toFixed(2)} credits left`}
+              </small>
+            </div>
+          </div>
           <div className="planDetail"><span>Current plan</span><strong>{user.plan === "premium" ? "Premium" : "Free"}</strong><small>Immediate results · up to 10 offers · CV upload included</small><small>{usage.available_credits.toFixed(2)} credits left</small></div>
           <div className="upgradeBox"><strong>Buy 4 credits · 2 EUR</strong><p>Verified payment activates Premium. Actual AI usage is recorded in your balance history.</p><div><button onClick={() => upgrade("blik")} disabled={busy}>Pay with BLIK</button><button onClick={() => upgrade("przelewy24")} disabled={busy}>Przelewy24</button></div></div>
         </aside>
