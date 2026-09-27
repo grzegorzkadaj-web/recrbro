@@ -11,6 +11,7 @@ from typing import Iterator
 from recrbro.config import (
     CREDIT_COST_MULTIPLIER,
     DATABASE_PATH,
+    FREE_STARTING_CREDITS,
     SEED_DEMO_USERS,
 )
 from recrbro.currency import eur_usd_rate, usd_to_eur
@@ -33,7 +34,6 @@ LIST_FIELDS = {
     "contract_types",
     "excluded_companies",
 }
-FREE_STARTING_CREDITS = 0.1
 STALE_SEARCH_MINUTES = 15
 
 

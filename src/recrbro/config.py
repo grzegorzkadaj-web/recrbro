@@ -24,6 +24,7 @@ OPENAI_OUTPUT_COST_PER_MILLION = float(
 )
 USD_TO_PLN = float(os.getenv("USD_TO_PLN", "4.0"))
 CREDIT_COST_MULTIPLIER = float(os.getenv("CREDIT_COST_MULTIPLIER", "10"))
+FREE_STARTING_CREDITS = float(os.getenv("FREE_STARTING_CREDITS", "0.1"))
 CURRENCY_RATE_URL = os.getenv(
     "CURRENCY_RATE_URL", "https://api.frankfurter.dev/v2/rate/EUR/USD"
 )

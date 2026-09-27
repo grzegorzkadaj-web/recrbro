@@ -10,8 +10,9 @@ remaining roles against the candidate's requirements.
 - Email/password accounts with Cloudflare Turnstile-protected registration and
   mandatory acceptance of the current terms and privacy policy. Acceptance
   timestamps and document versions are stored with the account.
-- New accounts start on Free with 0.1 credit. Free accounts can upload a PDF CV
-  and run immediate searches with up to ten results each.
+- New accounts start on Free with the `FREE_STARTING_CREDITS` balance (default
+  `0.1`). Free accounts can upload a PDF CV and run immediate searches with up
+  to ten results each.
 - A verified 2 EUR Przelewy24/BLIK payment adds four credits and restores
   Premium.
 - Credit balance is an append-only event stream containing purchases and actual
