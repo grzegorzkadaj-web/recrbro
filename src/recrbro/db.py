@@ -91,6 +91,10 @@ def initialize_database() -> None:
                 result_limit INTEGER NOT NULL,
                 monthly_budget_pln REAL NOT NULL,
                 credits_bought_usd REAL NOT NULL DEFAULT 0,
+                terms_accepted_at TEXT,
+                terms_version TEXT,
+                privacy_accepted_at TEXT,
+                privacy_policy_version TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -218,6 +222,14 @@ def initialize_database() -> None:
                 SET credits_bought_usd = CASE WHEN plan = 'premium' THEN 1 ELSE 0 END
                 """,
             )
+        for column, definition in (
+            ("terms_accepted_at", "TEXT"),
+            ("terms_version", "TEXT"),
+            ("privacy_accepted_at", "TEXT"),
+            ("privacy_policy_version", "TEXT"),
+        ):
+            if column not in user_columns:
+                database.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
         profile_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(profiles)")
         }
@@ -475,16 +487,39 @@ def get_user_by_email(
     return (user, password_hash) if include_password else user
 
 
-def create_user(name: str, email: str, password_hash: str | None = None) -> User:
+def create_user(
+    name: str,
+    email: str,
+    password_hash: str | None = None,
+    *,
+    terms_version: str | None = None,
+    privacy_policy_version: str | None = None,
+) -> User:
     with connection() as database:
+        accepted_at = (
+            _now()
+            if terms_version is not None and privacy_policy_version is not None
+            else None
+        )
         cursor = database.execute(
             """
             INSERT INTO users
                 (name, email, password_hash, plan, result_limit,
-                 monthly_budget_pln, credits_bought_usd, created_at)
-            VALUES (?, ?, ?, 'free', 10, 0, 0, ?)
+                 monthly_budget_pln, credits_bought_usd, terms_accepted_at,
+                 terms_version, privacy_accepted_at, privacy_policy_version,
+                 created_at)
+            VALUES (?, ?, ?, 'free', 10, 0, 0, ?, ?, ?, ?, ?)
             """,
-            (name, email, password_hash, _now()),
+            (
+                name,
+                email,
+                password_hash,
+                accepted_at,
+                terms_version,
+                accepted_at,
+                privacy_policy_version,
+                _now(),
+            ),
         )
         user_id = int(cursor.lastrowid)
         _record_balance_event(

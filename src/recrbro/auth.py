@@ -16,6 +16,8 @@ from recrbro.db import create_session, create_user, get_user_by_email
 from recrbro.models import User
 
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+TERMS_VERSION = "2026-09-27"
+PRIVACY_POLICY_VERSION = "2026-09-27"
 
 
 def hash_password(password: str) -> str:
@@ -62,7 +64,13 @@ def register_user(name: str, email: str, password: str) -> tuple[str, User]:
         raise ValueError("Enter a valid email address.")
     if get_user_by_email(normalized_email):
         raise ValueError("An account with this email already exists.")
-    user = create_user(name.strip(), normalized_email, hash_password(password))
+    user = create_user(
+        name.strip(),
+        normalized_email,
+        hash_password(password),
+        terms_version=TERMS_VERSION,
+        privacy_policy_version=PRIVACY_POLICY_VERSION,
+    )
     return issue_session(user.id), user
 
 

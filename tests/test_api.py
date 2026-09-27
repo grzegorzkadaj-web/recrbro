@@ -231,6 +231,8 @@ def test_user_can_register_and_access_own_profile(client: TestClient) -> None:
             "email": "ada@example.com",
             "password": "correct-horse-battery",
             "captcha_token": "test-captcha-token",
+            "terms_accepted": True,
+            "privacy_accepted": True,
         },
     )
 
@@ -240,6 +242,20 @@ def test_user_can_register_and_access_own_profile(client: TestClient) -> None:
     assert payload["user"]["result_limit"] == 10
     assert payload["user"]["credits_bought"] == 0
     assert payload["user"]["available_credits"] == 0.1
+    with db.connection() as database:
+        consent = database.execute(
+            """
+            SELECT terms_accepted_at, terms_version, privacy_accepted_at,
+                   privacy_policy_version
+            FROM users
+            WHERE id = ?
+            """,
+            (payload["user"]["id"],),
+        ).fetchone()
+    assert consent["terms_accepted_at"]
+    assert consent["terms_version"] == "2026-09-27"
+    assert consent["privacy_accepted_at"]
+    assert consent["privacy_policy_version"] == "2026-09-27"
 
     response = client.get(
         "/api/profile",
@@ -274,6 +290,8 @@ def test_registration_requires_valid_captcha(client: TestClient) -> None:
             "email": "invalid-captcha@example.com",
             "password": "correct-horse-battery",
             "captcha_token": "invalid",
+            "terms_accepted": True,
+            "privacy_accepted": True,
         },
     )
 
@@ -281,6 +299,23 @@ def test_registration_requires_valid_captcha(client: TestClient) -> None:
     assert invalid.status_code == 400
     assert invalid.json()["detail"] == "CAPTCHA verification failed. Please try again."
     assert db.get_user_by_email("invalid-captcha@example.com") is None
+
+
+def test_registration_requires_legal_consents(client: TestClient) -> None:
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "name": "No Consent",
+            "email": "no-consent@example.com",
+            "password": "correct-horse-battery",
+            "captcha_token": "test-captcha-token",
+            "terms_accepted": False,
+            "privacy_accepted": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert db.get_user_by_email("no-consent@example.com") is None
 
 
 def test_registration_reports_captcha_provider_failure(
@@ -298,6 +333,8 @@ def test_registration_reports_captcha_provider_failure(
             "email": "provider-failure@example.com",
             "password": "correct-horse-battery",
             "captcha_token": "test-captcha-token",
+            "terms_accepted": True,
+            "privacy_accepted": True,
         },
     )
 
@@ -354,6 +391,8 @@ def test_free_account_search_runs_immediately(
             "email": "queue@example.com",
             "password": "correct-horse-battery",
             "captcha_token": "test-captcha-token",
+            "terms_accepted": True,
+            "privacy_accepted": True,
         },
     ).json()
     headers = {"Authorization": f"Bearer {registration['token']}"}
@@ -1209,6 +1248,8 @@ def test_credit_exhaustion_downgrades_and_payment_restores(
             "email": "credits@example.com",
             "password": "correct-horse-battery",
             "captcha_token": "test-captcha-token",
+            "terms_accepted": True,
+            "privacy_accepted": True,
         },
     ).json()
     user_id = registration["user"]["id"]
@@ -1336,6 +1377,8 @@ def test_user_can_mark_offer_applied_across_search_history(
             "email": "applications@example.com",
             "password": "correct-horse-battery",
             "captcha_token": "test-captcha-token",
+            "terms_accepted": True,
+            "privacy_accepted": True,
         },
     ).json()
     user_id = registration["user"]["id"]

@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { z } from "zod";
+import { LegalFooter } from "./legal-footer";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
@@ -332,6 +333,8 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
                   ...credentials,
                   name: form.get("name"),
                   captcha_token: captchaToken,
+                  terms_accepted: form.get("terms_accepted") === "on",
+                  privacy_accepted: form.get("privacy_accepted") === "on",
                 },
           ),
         },
@@ -370,7 +373,10 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
             shortlist instead of another endless job-board scroll.
           </p>
         </div>
-        <p className="authTrust">Live multi-source discovery. Active-offer checks. Your profile stays under your account.</p>
+        <div>
+          <p className="authTrust">Live multi-source discovery. Active-offer checks. Your profile stays under your account.</p>
+          <LegalFooter compact />
+        </div>
       </section>
       <section className="authPanel">
         <div className="authCard">
@@ -382,6 +388,18 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
             )}
             <label><span>Email</span><input name="email" type="email" autoComplete="email" required /></label>
             <label><span>Password</span><input name="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required minLength={10} /></label>
+            {mode === "register" && (
+              <div className="consents">
+                <label>
+                  <input name="terms_accepted" type="checkbox" required />
+                  <span>I accept the <a href="/terms" target="_blank" rel="noreferrer">Terms of Service</a>.</span>
+                </label>
+                <label>
+                  <input name="privacy_accepted" type="checkbox" required />
+                  <span>I have read the <a href="/privacy-policy" target="_blank" rel="noreferrer">Privacy Policy</a>.</span>
+                </label>
+              </div>
+            )}
             {mode === "register" && TURNSTILE_SITE_KEY && (
               <TurnstileWidget
                 key={captchaVersion}
@@ -715,7 +733,7 @@ function Dashboard({
             <label className="wide"><span>Languages</span><input value={listDrafts.languages} onChange={(e) => updateListField("languages", e.target.value)} placeholder="English, Polish" /></label>
             <label className="wide"><span>Other skills</span><input value={listDrafts.other_skills} onChange={(e) => updateListField("other_skills", e.target.value)} placeholder="Docker, Azure, mentoring" /></label>
             <label className="wide"><span>Companies to exclude</span><input value={listDrafts.excluded_companies} onChange={(e) => updateListField("excluded_companies", e.target.value)} placeholder="Company A, Company B" /></label>
-            <label className="wide"><span>Additional requirements</span><textarea value={profile.additional_limitations} onChange={(e) => updateField("additional_limitations", e.target.value)} placeholder="I'm interested in jobs in Poland. No night shifts." /><small>High-priority requirements used while discovering and validating offers.</small></label>
+            <label className="wide"><span>Additional requirements</span><textarea value={profile.additional_limitations} onChange={(e) => updateField("additional_limitations", e.target.value)} placeholder="No night shifts." /><small>High-priority requirements used while discovering and validating offers.</small></label>
           </div>
           <div className="cvCard">
             <div><strong>Build from a CV</strong><span>{profile.cv_filename ? `Using ${profile.cv_filename}` : "Upload a PDF to extract skills and languages."}</span></div>
@@ -776,7 +794,7 @@ function Dashboard({
           ))}</div>
         )}
       </section>
-      <footer><span>RecrBro · Recruiting help without the noise</span><span>Live discovery by Tavily · Assistant by CopilotKit</span></footer>
+      <LegalFooter />
     </main>
   );
 }
