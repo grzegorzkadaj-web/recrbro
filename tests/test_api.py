@@ -32,6 +32,8 @@ def accept_job_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
                 is_specific_offer=True,
                 is_active=True,
                 location_matches=True,
+                matching_level=82,
+                match_description="Strong skills and location match.",
                 reason="Test fixture accepts the offer.",
             )
             for index, url in enumerate(results_by_url)
@@ -375,6 +377,31 @@ def test_search_query_uses_criteria_without_target_role(client: TestClient) -> N
     ]
 
 
+def test_search_query_extracts_concise_context_from_additional_requirements(
+    client: TestClient,
+) -> None:
+    profile = db.get_profile(2)
+    assert profile is not None
+    profile.location = ""
+    profile.work_modes = []
+    profile.contract_types = []
+    profile.additional_limitations = (
+        "I'm a Python AI Developer beginner, junior. I'm interested in jobs in "
+        "Poland. I'm looking for my first job as a AI developer."
+    )
+
+    assert services.build_search_query(profile) == (
+        '"Python" Poland AI developer hiring'
+    )
+    assert services.build_search_queries(profile, 100) == [
+        '"Python" AI developer jobs Poland hiring apply',
+        '"Python" jobs Poland hiring apply',
+        '"Python" developer jobs Poland hiring apply',
+        '"Python" engineer jobs Poland hiring apply',
+        '"Python" specialist jobs Poland hiring apply',
+    ]
+
+
 def test_free_search_supports_ten_ranked_results(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -605,6 +632,10 @@ def test_ai_assesses_activity_and_requested_location(
                             is_specific_offer=True,
                             is_active=False,
                             location_matches=True,
+                            matching_level=25,
+                            match_description=(
+                                "Relevant PHP skills, but applications are closed."
+                            ),
                             reason="Applications are not being accepted.",
                         ),
                         services.JobAssessment(
@@ -612,6 +643,10 @@ def test_ai_assesses_activity_and_requested_location(
                             is_specific_offer=True,
                             is_active=True,
                             location_matches=False,
+                            matching_level=40,
+                            match_description=(
+                                "Relevant PHP skills, but the location is incompatible."
+                            ),
                             reason="Remote work is restricted to the United States.",
                         ),
                     ]
@@ -661,11 +696,21 @@ def test_ai_assesses_activity_and_requested_location(
     assert not assessments["https://www.linkedin.com/jobs/view/1"].is_active
     assert not assessments["https://www.linkedin.com/jobs/view/2"].location_matches
     assert "is_specific_offer=true only" in captured["messages"][0][1]
+    assert (
+        "do not require the offer to literally mention a first job"
+        in captured["messages"][0][1]
+    )
     assert '"requested_location": "Poland"' in captured["messages"][1][1]
     assert (
         '"candidate_requirements": "Do not include jobs based in Asia."'
         in captured["messages"][1][1]
     )
+    assert '"query_template": "You act as a recruiter.' in captured["messages"][1][1]
+    assert (
+        '"offer_url": "https://www.linkedin.com/jobs/view/1"'
+        in captured["messages"][1][1]
+    )
+    assert '"candidate_profile": {' in captured["messages"][1][1]
     assert recorded_usage == [
         {
             "user_id": 2,
@@ -701,6 +746,8 @@ def test_ai_assessment_batches_candidates_and_retries_missing_ids(
                             is_specific_offer=True,
                             is_active=True,
                             location_matches=True,
+                            matching_level=75,
+                            match_description="Good overall match.",
                             reason="Offer is active.",
                         )
                         for candidate_id in returned_ids
@@ -778,6 +825,8 @@ def test_search_excludes_ai_rejected_offers(
                 is_specific_offer=True,
                 is_active=index != 0,
                 location_matches=index != 1,
+                matching_level=70,
+                match_description="Reasonable match with some gaps.",
                 reason="Rejected by AI validation.",
             )
             for index, url in enumerate(results_by_url)
@@ -816,6 +865,8 @@ def test_ai_rejects_pages_that_are_not_specific_job_offers(
                 is_specific_offer=False,
                 is_active=True,
                 location_matches=True,
+                matching_level=10,
+                match_description="This is not a specific job offer.",
                 reason="This is a developer-hiring service, not a vacancy.",
             )
         },
@@ -825,6 +876,63 @@ def test_ai_rejects_pages_that_are_not_specific_job_offers(
 
     assert offers == []
     assert counts["non_specific"] == 1
+
+
+def test_ai_match_percentage_and_description_drive_results(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = db.get_profile(2)
+    assert profile is not None
+    results = {
+        "https://example.com/jobs/keyword-heavy": {
+            "title": "Python Developer",
+            "url": "https://example.com/jobs/keyword-heavy",
+            "raw_content": (
+                "Apply now. Python FastAPI SQL remote hybrid Poland B2B employment."
+            ),
+        },
+        "https://example.com/jobs/ai-preferred": {
+            "title": "Backend Engineer",
+            "url": "https://example.com/jobs/ai-preferred",
+            "raw_content": "Apply now. Backend engineering role.",
+        },
+    }
+    monkeypatch.setattr(
+        services,
+        "_assess_job_results",
+        lambda _profile, _results: {
+            "https://example.com/jobs/keyword-heavy": services.JobAssessment(
+                candidate_id=0,
+                is_specific_offer=True,
+                is_active=True,
+                location_matches=True,
+                matching_level=42,
+                match_description="Several keywords match, but the role has major gaps.",
+                reason="Eligible offer.",
+            ),
+            "https://example.com/jobs/ai-preferred": services.JobAssessment(
+                candidate_id=1,
+                is_specific_offer=True,
+                is_active=True,
+                location_matches=True,
+                matching_level=91,
+                match_description="Strong overall fit for the candidate profile.",
+                reason="Eligible offer.",
+            ),
+        },
+    )
+
+    offers, _ = services._build_job_offers(profile, results, set())
+    offers.sort(key=lambda offer: offer.score, reverse=True)
+
+    assert [str(offer.url) for offer in offers] == [
+        "https://example.com/jobs/ai-preferred",
+        "https://example.com/jobs/keyword-heavy",
+    ]
+    assert offers[0].score == 91
+    assert offers[0].summary == "Strong overall fit for the candidate profile."
+    assert offers[0].match_reasons == ["Strong overall fit for the candidate profile."]
 
 
 def test_search_uses_tavily_content_when_direct_fetch_is_blocked(
@@ -1183,6 +1291,10 @@ def test_empty_location_preserves_additional_location_requirements(
                             is_specific_offer=True,
                             is_active=True,
                             location_matches=False,
+                            matching_level=55,
+                            match_description=(
+                                "The role fits technically but not geographically."
+                            ),
                             reason="Model returned a restrictive location decision.",
                         )
                     ]

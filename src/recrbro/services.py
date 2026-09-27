@@ -80,6 +80,24 @@ TAVILY_ERRORS = (
 )
 JOB_ANALYSIS_BATCH_SIZE = 5
 JOB_ANALYSIS_ATTEMPTS = 2
+JOB_MATCH_QUERY_TEMPLATE = """You act as a recruiter.
+This is a job offer: {offer_url}
+This is a candidate profile: {candidate_profile}
+Give me 2 information in return:
+- matching level in percent
+- short description of what fits and what does not"""
+ADDITIONAL_LOCATION_PATTERN = re.compile(
+    r"\b(?:jobs?|roles?|positions?|work)\s+(?:based\s+)?in\s+"
+    r"(?P<location>[A-Za-z][A-Za-z .'-]{1,50}?)"
+    r"(?=[.!?,;]|\s+(?:and|or|with|that|where)\b|$)",
+    re.IGNORECASE,
+)
+ADDITIONAL_ROLE_PATTERN = re.compile(
+    r"\b(?:job|role|position|work)\s+as\s+(?:an?\s+)?"
+    r"(?P<role>[A-Za-z][A-Za-z0-9 +#./-]{1,50}?)"
+    r"(?=[.!?,;]|\s+(?:in|with|at|for)\b|$)",
+    re.IGNORECASE,
+)
 
 
 class ExtractedCvProfile(BaseModel):
@@ -94,6 +112,8 @@ class JobAssessment(BaseModel):
     is_active: bool
     location_matches: bool
     criteria_matches: bool = True
+    matching_level: float = Field(ge=0, le=100)
+    match_description: str = Field(min_length=1, max_length=500)
     reason: str
 
 
@@ -275,33 +295,62 @@ async def analyze_cv(
     return CvAnalysis(profile=profile, analysis_mode=mode, warning=warning)
 
 
+def _additional_search_context(profile: Profile) -> tuple[str, list[str]]:
+    requirements = profile.additional_limitations.strip()
+    inferred_location = ""
+    if not profile.location.strip() and requirements:
+        location_match = ADDITIONAL_LOCATION_PATTERN.search(requirements)
+        if location_match:
+            inferred_location = location_match.group("location").strip()
+
+    target_roles = [
+        match.group("role").strip()
+        for match in ADDITIONAL_ROLE_PATTERN.finditer(requirements)
+    ]
+    return inferred_location, _unique(target_roles)
+
+
 def build_search_query(profile: Profile) -> str:
+    inferred_location, target_roles = _additional_search_context(profile)
     parts = [
         " ".join(f'"{skill}"' for skill in profile.core_skills[:5]),
-        profile.location,
+        profile.location.strip() or inferred_location,
+        " ".join(target_roles[:2]),
         " ".join(profile.work_modes),
         " ".join(profile.contract_types),
         f"{profile.minimum_salary} PLN" if profile.minimum_salary else "",
-        profile.additional_limitations,
         "hiring",
     ]
     return " ".join(part for part in parts if part).strip()
 
 
 def build_search_queries(profile: Profile, limit: int) -> list[str]:
+    inferred_location, target_roles = _additional_search_context(profile)
     filters = " ".join(
         part
         for part in (
-            profile.location.strip(),
+            profile.location.strip() or inferred_location,
             " ".join(profile.work_modes),
             " ".join(profile.contract_types),
             f"{profile.minimum_salary} PLN" if profile.minimum_salary else "",
-            profile.additional_limitations.strip(),
         )
         if part
     )
     role_templates = ("jobs", "developer jobs", "engineer jobs", "specialist jobs")
     queries = [
+        " ".join(
+            part
+            for part in (
+                f'"{skill}" {role} jobs',
+                filters,
+                "hiring apply",
+            )
+            if part
+        )
+        for skill in profile.core_skills[:5]
+        for role in target_roles[:2]
+    ]
+    queries.extend(
         " ".join(
             part
             for part in (
@@ -313,7 +362,7 @@ def build_search_queries(profile: Profile, limit: int) -> list[str]:
         )
         for role_template in role_templates
         for skill in profile.core_skills[:5]
-    ]
+    )
     queries.append(
         " ".join(
             part
@@ -774,6 +823,28 @@ def _job_analysis_cost(input_tokens: int, output_tokens: int) -> float:
     )
 
 
+def _candidate_profile_payload(profile: Profile) -> dict[str, object]:
+    return {
+        "core_skills": profile.core_skills,
+        "other_skills": profile.other_skills,
+        "languages": profile.languages,
+        "location": profile.location.strip(),
+        "work_modes": profile.work_modes,
+        "minimum_salary": profile.minimum_salary,
+        "contract_types": profile.contract_types,
+        "additional_requirements": profile.additional_limitations.strip(),
+    }
+
+
+def _matched_profile_skills(content: str, profile: Profile) -> list[str]:
+    searchable = content.casefold()
+    return [
+        skill
+        for skill in [*profile.core_skills, *profile.other_skills]
+        if skill.casefold() in searchable
+    ]
+
+
 def _assess_job_results(
     profile: Profile, results_by_url: dict[str, dict]
 ) -> dict[str, JobAssessment]:
@@ -781,8 +852,12 @@ def _assess_job_results(
         return {}
     user = get_user(profile.user_id)
     if user is not None and user.available_credits <= 0:
-        return {
-            url: JobAssessment(
+        assessments: dict[str, JobAssessment] = {}
+        for index, (url, result) in enumerate(results_by_url.items()):
+            title = str(result.get("title") or "")
+            content = _offer_page_text(result)
+            score, _, reasons = _rank_offer(title, content, profile)
+            assessments[url] = JobAssessment(
                 candidate_id=index,
                 is_specific_offer=not _looks_like_collection(result),
                 is_active=True,
@@ -790,17 +865,20 @@ def _assess_job_results(
                 criteria_matches=(
                     not profile.core_skills
                     or any(
-                        skill.casefold() in _offer_page_text(result).casefold()
+                        skill.casefold() in content.casefold()
                         for skill in profile.core_skills
                     )
+                ),
+                matching_level=score,
+                match_description=(
+                    f"AI matching requires available credits. {'; '.join(reasons)}."
                 ),
                 reason=(
                     "Deterministic content validation; AI eligibility validation "
                     "requires available credits."
                 ),
             )
-            for index, (url, result) in enumerate(results_by_url.items())
-        }
+        return assessments
     if not OPENAI_API_KEY:
         raise RuntimeError(
             "OPENAI_API_KEY is required to verify whether job offers are active "
@@ -809,9 +887,14 @@ def _assess_job_results(
 
     indexed_results = list(results_by_url.items())
     candidates = [
-        {"candidate_id": index, "text": _offer_analysis_text(result)}
-        for index, (_, result) in enumerate(indexed_results)
+        {
+            "candidate_id": index,
+            "offer_url": url,
+            "offer_content": _offer_analysis_text(result),
+        }
+        for index, (url, result) in enumerate(indexed_results)
     ]
+    candidate_profile = _candidate_profile_payload(profile)
     model = ChatOpenAI(
         model=OPENAI_JOB_ANALYSIS_MODEL,
         reasoning_effort="low",
@@ -850,12 +933,25 @@ def _assess_job_results(
         "Set criteria_matches=false when the role does not involve any requested "
         "core skill, or when it explicitly conflicts with requested work modes, "
         "contract types, minimum salary, or candidate requirements. Missing salary "
-        "or contract details are not conflicts. Treat candidate_requirements as "
-        "mandatory requirements even when phrased as interests or preferences. "
+        "or contract details are not conflicts. Candidate requirements can mix hard "
+        "constraints with background and aspirations. Enforce explicit exclusions "
+        "and concrete work constraints. Treat target-role statements as the desired "
+        "role family: reject clearly unrelated work, but accept semantically related "
+        "titles. Treat statements such as 'beginner', 'junior', or 'first job' as "
+        "entry-level seniority context: reject roles explicitly described as senior, "
+        "lead, principal, or managerial, but accept roles whose seniority is "
+        "unspecified and do not require the offer to literally mention a first job "
+        "or beginner. "
         "Reject a candidate through location_matches when the offer conflicts with "
         "location-related requirements or does not establish that a required "
         "location is allowed, "
         "including excluded regions or required countries. "
+        "For every eligible offer, follow the supplied recruiter query template. "
+        "Set matching_level to a percentage from 0 to 100 based on the whole "
+        "candidate profile, and set match_description to a short explanation of "
+        "both matching points and important gaps. The percentage is the final "
+        "ranking score, so compare candidates consistently. Do not reward a "
+        "criterion merely because it is missing from the offer. "
         "Keep reason concise."
     )
     assessments_by_id: dict[int, JobAssessment] = {}
@@ -871,14 +967,10 @@ def _assess_job_results(
                         "human",
                         json.dumps(
                             {
+                                "query_template": JOB_MATCH_QUERY_TEMPLATE,
+                                "candidate_profile": candidate_profile,
                                 "requested_location": profile.location.strip(),
-                                "core_skills": profile.core_skills,
-                                "work_modes": profile.work_modes,
-                                "minimum_salary": profile.minimum_salary,
-                                "contract_types": profile.contract_types,
-                                "candidate_requirements": (
-                                    profile.additional_limitations.strip()
-                                ),
+                                "candidate_requirements": profile.additional_limitations.strip(),
                                 "candidates": list(pending.values()),
                             },
                             ensure_ascii=False,
@@ -1053,7 +1145,8 @@ def _build_job_offers(
                 {"linkedin_page_content": result.get("linkedin_page_content")}
             )
         )
-        score, matched_skills, reasons = _rank_offer(title, content, profile)
+        matched_skills = _matched_profile_skills(content, profile)
+        reasons = [assessment.match_description]
         if assessment.reason.startswith("Deterministic content validation"):
             reasons.append(assessment.reason)
         if result.get("direct_verification_failed"):
@@ -1067,10 +1160,10 @@ def _build_job_offers(
                 title=title,
                 company=company,
                 url=result["url"],
-                summary=content[:500],
-                score=score,
+                summary=assessment.match_description,
+                score=assessment.matching_level,
                 matched_skills=matched_skills,
-                match_reasons=reasons,
+                match_reasons=[reason for reason in reasons if reason],
             )
         )
     return offers, counts

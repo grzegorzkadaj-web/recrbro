@@ -85,7 +85,10 @@ pass certification. The implementation uses the official transaction register
 and verify flow documented at <https://developers.przelewy24.pl/>.
 
 Search results for every plan are persisted and presented directly in the
-website dashboard. LangSmith tracing uses the standard `LANGSMITH_*` variables.
+website dashboard. Eligible offers are ranked by an AI-generated match
+percentage against the complete candidate profile, with the AI's concise fit
+and gap explanation shown on each result. LangSmith tracing uses the standard
+`LANGSMITH_*` variables.
 
 ## Railway deployment
 
