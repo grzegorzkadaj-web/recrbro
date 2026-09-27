@@ -7,5 +7,11 @@ export function LogoMark() {
 }
 
 export function BrandLogo() {
-  return <img className="brandArtwork" src="/recrbro-logo.webp" alt="" />;
+  return (
+    <span className="brandLockup">
+      <img className="brandArtwork" src="/recrbro-logo.webp" alt="" />
+      <span className="brandTagline">Find Your Next Opportunity</span>
+      <span className="brandWebsite">www.recrbro.com</span>
+    </span>
+  );
 }
