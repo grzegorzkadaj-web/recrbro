@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { z } from "zod";
+import { BrandLogo, LogoMark } from "./brand-logo";
 import { LegalFooter } from "./legal-footer";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -211,15 +212,6 @@ async function api<T>(
   return response.json() as Promise<T>;
 }
 
-function Logo() {
-  return (
-    <span className="logo" aria-hidden="true">
-      <span>R</span>
-      <i />
-    </span>
-  );
-}
-
 function TurnstileWidget({
   onToken,
   onError,
@@ -362,8 +354,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
     <main className="authShell">
       <section className="authIntro">
         <a className="brand" href="#" aria-label="RecrBro home">
-          <Logo />
-          <span>RecrBro</span>
+          <BrandLogo />
         </a>
         <div>
           <p className="eyebrow">Your recruiting bro</p>
@@ -683,7 +674,7 @@ function Dashboard({
   return (
     <main>
       <header className="topbar">
-        <a className="brand" href="#top"><Logo /><span>RecrBro</span></a>
+        <a className="brand" href="#top" aria-label="RecrBro home"><BrandLogo /></a>
         <div className="userControl">
           <span className={`planBadge ${user.plan}`}>{user.plan}</span>
           <span className="userName">{user.name}</span>
@@ -815,7 +806,7 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <main className="loadingScreen"><Logo /><strong>Loading RecrBro...</strong></main>;
+  if (loading) return <main className="loadingScreen"><LogoMark /><strong>Loading RecrBro...</strong></main>;
   if (!session) return <AuthScreen onAuthenticated={(token, user) => { localStorage.setItem(SESSION_KEY, token); setSession({ token, user }); }} />;
   return <Dashboard initialUser={session.user} token={session.token} onLogout={() => { void api<void>("/api/auth/session", session.token, { method: "DELETE" }); localStorage.removeItem(SESSION_KEY); setSession(null); }} />;
 }

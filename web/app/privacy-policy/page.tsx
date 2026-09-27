@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { BrandLogo } from "../brand-logo";
 import { LegalFooter } from "../legal-footer";
 
 export const metadata: Metadata = {
@@ -9,8 +10,7 @@ export default function PrivacyPage() {
   return (
     <main className="legalPage">
       <a className="brand" href="/" aria-label="RecrBro">
-        <span className="logo" aria-hidden="true">R<i /></span>
-        <span>RecrBro</span>
+        <BrandLogo />
       </a>
       <article>
         <p className="sectionNumber">Obowiązuje od 27 września 2026 r.</p>

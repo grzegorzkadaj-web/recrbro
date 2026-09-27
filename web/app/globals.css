@@ -62,47 +62,93 @@ main {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 11px;
+  gap: 10px;
   color: var(--ink);
-  font-size: 20px;
-  font-weight: 800;
-  letter-spacing: -0.04em;
   text-decoration: none;
 }
 
-.brandMark {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 10px;
-  background: var(--ink);
-  color: var(--mint);
+.brandCopy {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+}
+
+.brandName {
+  color: currentColor;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+}
+
+.brandName span {
+  color: var(--mint-dark);
+}
+
+.brandTagline {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .logo {
-  position: relative;
-  display: grid;
+  display: inline-flex;
+  flex: 0 0 auto;
   width: 38px;
   height: 38px;
-  place-items: center;
   overflow: hidden;
   border-radius: 12px;
   background: var(--ink);
-  color: var(--mint);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 21px;
-  font-weight: 700;
 }
 
-.logo i {
-  position: absolute;
-  right: -8px;
-  bottom: -9px;
-  width: 24px;
-  height: 24px;
-  border: 5px solid var(--coral);
-  border-radius: 50%;
+.logo svg {
+  width: 100%;
+  height: 100%;
+}
+
+.logoHeadset,
+.logoSmile,
+.logoMic {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.logoHeadset,
+.logoMic {
+  stroke: var(--coral);
+}
+
+.logoHeadset {
+  stroke-width: 4;
+}
+
+.logoFace {
+  fill: var(--mint);
+}
+
+.logoEarpiece,
+.logoMicDot,
+.logoTie {
+  fill: var(--coral);
+}
+
+.logoEye {
+  fill: var(--ink);
+}
+
+.logoSmile {
+  stroke: var(--ink);
+  stroke-width: 2.8;
+}
+
+.logoMic {
+  stroke-width: 3;
+}
+
+.logoShirt {
+  fill: var(--mint-dark);
 }
 
 .userControl {
@@ -807,9 +853,12 @@ footer {
   color: white;
 }
 
-.authIntro .logo {
-  background: var(--mint);
-  color: var(--ink);
+.authIntro .brandName span {
+  color: var(--mint);
+}
+
+.authIntro .brandTagline {
+  color: #bdc9c8;
 }
 
 .authIntro h1 {
