@@ -74,7 +74,7 @@ It should implement sorting strategy according to the following criteria: skills
 - user can run two searches with up to 5 job offers each
 - user can upload a CV; local extraction is used when AI credits are unavailable
 - search requests are queued and run on schedule
-- results are sent on email
+- results are presented on the website
 - there should be a delay for executing next request (configurable parameter, 1h by default)
 ## Premium
 - a 2 EUR purchase adds 4 credits and restores Premium
@@ -105,7 +105,7 @@ It should implement sorting strategy according to the following criteria: skills
 - job offers are deduplicated and ranked by core skills, location, work mode, and contract type
 - CopilotKit provides an embedded assistant for refining search criteria
 - Free searches are queued, rate-limited, run by a protected scheduled worker,
-  and delivered through SMTP
+  and presented in the website dashboard
 - Premium upgrades use the Przelewy24 hosted checkout and support BLIK
 - production deployment uses separate frontend and API containers with one
   persistent SQLite volume attached to a single API instance

@@ -310,37 +310,6 @@ def test_agent_requires_authentication(client: TestClient) -> None:
     assert response.status_code == 401
 
 
-def test_email_failure_does_not_discard_completed_search(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    search_id = db.create_search(1, '"Python" Poland', requested_results=1)
-    offer = services.JobOffer(
-        title="Python Developer",
-        company="Example",
-        url="https://www.linkedin.com/jobs/view/123",
-        summary="Active Python role.",
-        score=90,
-        matched_skills=["Python"],
-        match_reasons=["Matches Python"],
-    )
-    monkeypatch.setattr(
-        api_module,
-        "search_jobs",
-        lambda _profile, _limit: ('"Python" Poland', [offer], None),
-    )
-    monkeypatch.setattr(
-        api_module,
-        "send_search_results",
-        lambda _email, _offers: (_ for _ in ()).throw(RuntimeError("SMTP offline")),
-    )
-
-    result = api_module._run_search(search_id)
-
-    assert result.status == "complete"
-    assert len(result.offers) == 1
-    assert "Email delivery failed" in (result.warning or "")
-
-
 def test_free_user_can_upload_cv(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

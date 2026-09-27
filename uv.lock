@@ -1362,7 +1362,6 @@ dependencies = [
     { name = "pypdf" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
-    { name = "requests" },
     { name = "tavily-python" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1387,7 +1386,6 @@ requires-dist = [
     { name = "pypdf", specifier = ">=5,<7" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "python-multipart", specifier = ">=0.0.20,<1" },
-    { name = "requests", specifier = ">=2.32,<3" },
     { name = "tavily-python", specifier = ">=0.7,<1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
 ]

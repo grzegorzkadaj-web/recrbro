@@ -32,7 +32,6 @@ from recrbro.config import (
     FRONTEND_ORIGINS,
 )
 from recrbro.db import (
-    append_search_warning,
     complete_search,
     create_search,
     delete_session,
@@ -65,7 +64,6 @@ from recrbro.models import (
     UsageSummary,
     User,
 )
-from recrbro.notifications import send_search_results
 from recrbro.payments import create_checkout, verify_status
 from recrbro.services import (
     analyze_cv,
@@ -136,16 +134,6 @@ def _run_search(search_id: int) -> SearchJob:
     except Exception as error:
         fail_search(search_id, str(error))
         raise
-    completed_user = next(
-        (candidate for candidate in list_users() if candidate.id == user.id), user
-    )
-    if completed_user.plan == "free":
-        try:
-            email_warning = send_search_results(user.email, offers)
-        except Exception as error:
-            email_warning = f"Email delivery failed: {error}"
-        if email_warning:
-            append_search_warning(search_id, email_warning)
     completed = get_search(search_id, user.id)
     if completed is None:
         raise LookupError("Completed search could not be loaded.")

@@ -41,7 +41,6 @@ strict TypeScript no-emit check rather than ESLint.
   search, and deterministic result ranking.
 - `src/recrbro/auth.py` owns password hashing, opaque sessions, and Google OAuth.
 - `src/recrbro/payments.py` owns Przelewy24 registration and verification.
-- `src/recrbro/notifications.py` owns SMTP search-result delivery.
 - `src/recrbro/agent.py` exposes the LangGraph agent through AG-UI at `/agent`.
 - `web/app/api/copilotkit/route.ts` is the CopilotKit Runtime proxy between the
   browser and the Python AG-UI endpoint.
