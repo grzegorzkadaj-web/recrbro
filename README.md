@@ -40,6 +40,44 @@ remaining roles against the candidate's requirements.
 - `src/recrbro/agent.py`: LangGraph agent exposed over AG-UI.
 - `web`: responsive Next.js 16 and CopilotKit interface.
 
+### AI model usage
+
+The backend uses OpenAI models at three points:
+
+- The CopilotKit/LangGraph assistant uses `OPENAI_MODEL`.
+- CV extraction uses `OPENAI_MODEL` until the account's tracked AI spend reaches
+  25 PLN, then switches to `OPENAI_JOB_ANALYSIS_MODEL`. If AI is unavailable or
+  the account has no credit, CV extraction uses the visibly labelled local
+  keyword fallback.
+- Offer validation, location and criteria eligibility, match percentage, and
+  fit/gap explanations use `OPENAI_JOB_ANALYSIS_MODEL`.
+
+Model names and accounting rates are configured through the backend
+environment:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `OPENAI_MODEL` | `gpt-4.1-mini` | Selects the conversational assistant and the primary CV extraction model. |
+| `OPENAI_JOB_ANALYSIS_MODEL` | `gpt-5-nano` | Selects the structured offer-analysis model and the lower-cost CV model used after the 25 PLN threshold. |
+| `OPENAI_INPUT_COST_PER_MILLION` | `0.40` | Input-token USD rate used to estimate usage for `OPENAI_MODEL`, and for `OPENAI_JOB_ANALYSIS_MODEL` when it is not `gpt-5-nano`. |
+| `OPENAI_OUTPUT_COST_PER_MILLION` | `1.60` | Output-token USD rate used in the same accounting paths. |
+
+Changing a model changes latency, token usage, provider cost, and result quality.
+A larger model may improve CV field extraction, ambiguous location/eligibility
+decisions, and match explanations, but usually costs more and may respond more
+slowly. A smaller model generally reduces credit consumption and latency, but
+may produce less consistent structured classifications or lower-quality
+ranking explanations. The selected offer-analysis model must support the
+structured-output options used by the application.
+
+Whenever either model is changed, verify the current provider price and update
+`OPENAI_INPUT_COST_PER_MILLION` and `OPENAI_OUTPUT_COST_PER_MILLION` to match.
+Otherwise the stored USD usage cost and the credits charged to users will be
+incorrect. The default `gpt-5-nano` job-analysis rates are handled explicitly
+as `0.05` USD input and `0.40` USD output per million tokens; any other
+`OPENAI_JOB_ANALYSIS_MODEL` uses the two configurable rates above. Restart the
+API after changing these variables.
+
 SQLite remains appropriate for this small, single-instance deployment. Do not
 run more than one API replica against the database file. Move to PostgreSQL
 before horizontal scaling.
