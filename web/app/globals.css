@@ -62,14 +62,16 @@ main {
 .brand {
   display: inline-flex;
   align-items: center;
+  padding: 3px 7px;
+  border-radius: 12px;
+  background: white;
   text-decoration: none;
 }
 
 .brandArtwork {
   display: block;
   width: auto;
-  height: 58px;
-  border-radius: 10px;
+  height: 68px;
 }
 
 .logo {
@@ -787,7 +789,7 @@ footer {
 }
 
 .authIntro .brandArtwork {
-  height: 78px;
+  height: 92px;
 }
 
 .authIntro h1 {
@@ -953,11 +955,11 @@ footer {
 
 @media (max-width: 560px) {
   .brandArtwork {
-    height: 52px;
+    height: 60px;
   }
 
   .authIntro .brandArtwork {
-    height: 68px;
+    height: 78px;
   }
 
   .topbar,
