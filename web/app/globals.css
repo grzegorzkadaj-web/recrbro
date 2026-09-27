@@ -62,93 +62,30 @@ main {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  color: var(--ink);
   text-decoration: none;
 }
 
-.brandCopy {
-  display: flex;
-  flex-direction: column;
-  line-height: 1;
-}
-
-.brandName {
-  color: currentColor;
-  font-size: 20px;
-  font-weight: 800;
-  letter-spacing: -0.05em;
-}
-
-.brandName span {
-  color: var(--mint-dark);
-}
-
-.brandTagline {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+.brandArtwork {
+  display: block;
+  width: auto;
+  height: 58px;
+  border-radius: 10px;
 }
 
 .logo {
   display: inline-flex;
   flex: 0 0 auto;
-  width: 38px;
-  height: 38px;
+  width: 64px;
+  height: 64px;
   overflow: hidden;
-  border-radius: 12px;
-  background: var(--ink);
+  border-radius: 16px;
+  background: white;
 }
 
-.logo svg {
+.logo img {
   width: 100%;
   height: 100%;
-}
-
-.logoHeadset,
-.logoSmile,
-.logoMic {
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.logoHeadset,
-.logoMic {
-  stroke: var(--coral);
-}
-
-.logoHeadset {
-  stroke-width: 4;
-}
-
-.logoFace {
-  fill: var(--mint);
-}
-
-.logoEarpiece,
-.logoMicDot,
-.logoTie {
-  fill: var(--coral);
-}
-
-.logoEye {
-  fill: var(--ink);
-}
-
-.logoSmile {
-  stroke: var(--ink);
-  stroke-width: 2.8;
-}
-
-.logoMic {
-  stroke-width: 3;
-}
-
-.logoShirt {
-  fill: var(--mint-dark);
+  object-fit: cover;
 }
 
 .userControl {
@@ -849,16 +786,8 @@ footer {
   color: white;
 }
 
-.authIntro .brand {
-  color: white;
-}
-
-.authIntro .brandName span {
-  color: var(--mint);
-}
-
-.authIntro .brandTagline {
-  color: #bdc9c8;
+.authIntro .brandArtwork {
+  height: 78px;
 }
 
 .authIntro h1 {
@@ -1023,6 +952,14 @@ footer {
 }
 
 @media (max-width: 560px) {
+  .brandArtwork {
+    height: 52px;
+  }
+
+  .authIntro .brandArtwork {
+    height: 68px;
+  }
+
   .topbar,
   .panelHeading,
   .resultsHeading,
