@@ -147,8 +147,9 @@ volume for the single SQLite writer.
    `Dockerfile` as the Dockerfile path because paths are resolved relative to
    the configured service root; do not use `web/Dockerfile` together with a
    `/web` root directory. Set
-   `NEXT_PUBLIC_API_URL` as a build variable and `BACKEND_URL` as a runtime
-   variable to the API's public HTTPS URL.
+   `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_TURNSTILE_SITE_KEY` as build variables,
+   and `BACKEND_URL` as a runtime variable pointing to the API's public HTTPS
+   URL.
 3. Set `FRONTEND_ORIGINS` on the API to the web service's exact HTTPS origin
    (for example, `https://web-production-web.up.railway.app`) and
    `PUBLIC_API_URL` to the API's exact HTTPS origin. Multiple allowed web
