@@ -123,7 +123,6 @@ def test_user_foreign_keys_cascade(client: TestClient) -> None:
         "job_offers": ("searches", "search_id", "id"),
         "user_offer_statuses": ("users", "user_id", "id"),
         "usage_events": ("users", "user_id", "id"),
-        "payments": ("users", "user_id", "id"),
         "balance_events": ("users", "user_id", "id"),
     }
     user = db.create_user("Cascade Test", "cascade@example.com")
@@ -176,15 +175,6 @@ def test_user_foreign_keys_cascade(client: TestClient) -> None:
             """,
             (user.id,),
         )
-        database.execute(
-            """
-            INSERT INTO payments
-                (user_id, session_id, amount_grosz, method, status, created_at)
-            VALUES (?, 'cascade-payment', 200, 'card', 'pending', '2026-01-01')
-            """,
-            (user.id,),
-        )
-
         database.execute("DELETE FROM users WHERE id = ?", (user.id,))
 
         for table in expected_foreign_keys:
@@ -1362,7 +1352,7 @@ def test_work_modes_are_typed_and_normalize_onsite_alias(
     assert invalid.status_code == 422
 
 
-def test_credit_exhaustion_downgrades_and_payment_restores(
+def test_credit_exhaustion_keeps_free_plan(
     client: TestClient,
 ) -> None:
     registration = client.post(
@@ -1387,19 +1377,6 @@ def test_credit_exhaustion_downgrades_and_payment_restores(
     assert exhausted["plan"] == "free"
     assert exhausted["result_limit"] == 10
     assert usage["available_credits"] == 0
-
-    payment_id = db.create_payment(
-        user_id, "verified-session", 200, "blik", currency="EUR"
-    )
-    assert payment_id > 0
-    db.complete_payment("verified-session", 12345)
-    db.complete_payment("verified-session", 12345)
-
-    restored = client.get("/api/me", headers=headers).json()
-    assert restored["plan"] == "premium"
-    assert restored["result_limit"] == 10
-    assert restored["credits_bought"] == 4
-    assert restored["available_credits"] == 4
 
 
 def test_balance_events_record_converted_ai_cost(

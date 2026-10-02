@@ -13,7 +13,7 @@ export default function PrivacyPage() {
         <BrandLogo />
       </a>
       <article>
-        <p className="sectionNumber">Obowiązuje od 27 września 2026 r.</p>
+        <p className="sectionNumber">Obowiązuje od 2 października 2026 r.</p>
         <h1>Polityka prywatności</h1>
 
         <h2>1. Administrator danych</h2>
@@ -29,16 +29,14 @@ export default function PrivacyPage() {
           Serwis może przetwarzać imię, adres e-mail, skrót hasła, dane
           profilu zawodowego, treść i nazwę pliku CV, preferencje wyszukiwania,
           historię wyszukiwań i aplikowania, dane o wykorzystaniu kredytów,
-          płatnościach, sesji, adresie IP oraz dane techniczne przeglądarki.
-          Operator płatności przekazuje wyłącznie informacje potrzebne do
-          identyfikacji i potwierdzenia transakcji.
+          sesji, adresie IP oraz dane techniczne przeglądarki.
         </p>
 
         <h2>3. Cele i podstawy prawne</h2>
         <p>
           Dane są przetwarzane w celu utworzenia i obsługi konta, wykonania
-          żądanych wyszukiwań i analiz, obsługi płatności, zabezpieczenia
-          serwisu, rozpatrywania reklamacji oraz realizacji obowiązków
+          żądanych wyszukiwań i analiz, zabezpieczenia serwisu, rozpatrywania
+          reklamacji oraz realizacji obowiązków
           rachunkowych i prawnych. Podstawą jest wykonanie umowy, obowiązek
           prawny oraz prawnie uzasadniony interes administratora polegający na
           zapewnieniu bezpieczeństwa i dochodzeniu roszczeń.
@@ -51,7 +49,9 @@ export default function PrivacyPage() {
           informacje potrzebne do odnalezienia ofert są przekazywane do Tavily.
           Dane potrzebne do analizy CV, ofert i obsługi asystenta mogą być
           przekazywane do OpenAI. Cloudflare przetwarza dane techniczne podczas
-          weryfikacji Turnstile, a Przelewy24 przetwarza dane płatności.
+          weryfikacji Turnstile. Dobrowolne wsparcie jest realizowane po
+          przejściu do zewnętrznego serwisu buycoffee.to, który przetwarza dane
+          zgodnie z własnymi zasadami.
           Dostawcy mogą przetwarzać dane poza Europejskim Obszarem Gospodarczym
           na podstawie właściwych mechanizmów legalizujących transfer.
         </p>

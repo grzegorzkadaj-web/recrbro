@@ -37,7 +37,6 @@ BEGIN;
 DROP TABLE IF EXISTS job_offers;
 DROP TABLE IF EXISTS user_offer_statuses;
 DROP TABLE IF EXISTS usage_events;
-DROP TABLE IF EXISTS payments;
 DROP TABLE IF EXISTS balance_events;
 DROP TABLE IF EXISTS sessions;
 DROP TABLE IF EXISTS profiles;
@@ -151,21 +150,6 @@ CREATE TABLE IF NOT EXISTS usage_events (
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    session_id TEXT NOT NULL UNIQUE,
-    order_id INTEGER,
-    amount_grosz INTEGER NOT NULL,
-    currency TEXT NOT NULL DEFAULT 'EUR',
-    method TEXT NOT NULL,
-    status TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    completed_at TEXT,
-    CONSTRAINT fk_payments_user
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS balance_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -205,7 +189,7 @@ WHERE lower(email) = lower('user@example.com');
 COMMIT;
 ```
 
-The update changes the user's plan but does not create a payment or add credit
+The update changes the user's plan but does not add credit
 to the user's balance ledger.
 
 ## List all users
@@ -227,7 +211,7 @@ ORDER BY id;
 ## Delete a user
 
 Deleting a user is irreversible. Related sessions, profiles, searches, offers,
-usage records, payments, balance events, and application statuses are removed
+usage records, balance events, and application statuses are removed
 through foreign-key cascades.
 
 First verify the target:

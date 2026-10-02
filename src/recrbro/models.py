@@ -143,15 +143,6 @@ class BalanceEvent(BaseModel):
     created_at: datetime
 
 
-class CheckoutRequest(BaseModel):
-    method: Literal["przelewy24", "blik"] = "przelewy24"
-
-
-class CheckoutResponse(BaseModel):
-    payment_id: int
-    redirect_url: HttpUrl
-
-
 class UsageSummary(BaseModel):
     input_tokens: int
     output_tokens: int

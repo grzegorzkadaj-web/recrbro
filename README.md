@@ -13,13 +13,11 @@ offers, and ranks the remaining roles against the candidate's requirements.
 - New accounts start on Free with the `FREE_STARTING_CREDITS` balance (default
   `0.1`). Free accounts can upload a PDF CV and run immediate searches with up
   to ten results each.
-- A verified 2 EUR Przelewy24/BLIK payment adds four credits and restores
-  Premium.
-- Credit balance is an append-only event stream containing purchases and actual
+- Credit balance is an append-only event stream containing grants and actual
   AI usage charges. AI cost is converted from USD to EUR using the free
   Frankfurter reference-rate API, then multiplied by the configurable
   `CREDIT_COST_MULTIPLIER` (default `10`). At zero, the backend switches the
-  account to Free until another payment is verified. Authenticated clients can
+  account to Free. Authenticated clients can
   read the ledger through `GET /api/balance-history`.
 - Profiles include core and optional skills, languages, location, exactly three
   work-mode choices (remote, on-site, hybrid),
@@ -33,14 +31,13 @@ offers, and ranks the remaining roles against the candidate's requirements.
 ## Architecture
 
 - `src/recrbro/api.py`: FastAPI REST API, account boundary, live search
-  execution, security headers, and payment callback.
+  execution, and security headers.
 - `src/recrbro/db.py`: SQLite schema, migrations, sessions, profiles, searches,
-  offers, payments, and usage events.
+  offers, balance events, and usage events.
 - `src/recrbro/services.py`: PDF extraction, AI analysis, Tavily and
   CzyJestEldorado MCP discovery, source-aware URL validation, and deterministic
   ranking. LinkedIn and CzyJestEldorado offers additionally receive
   authoritative direct-page validation.
-- `src/recrbro/payments.py`: Przelewy24 registration and verification.
 - `src/recrbro/agent.py`: LangGraph agent exposed over AG-UI.
 - `web`: responsive Next.js 16 and CopilotKit interface.
 
@@ -127,9 +124,8 @@ as `NEXT_PUBLIC_TURNSTILE_SITE_KEY` on the web service and its secret key as
 either side is not configured. The example environment files use Cloudflare's
 official always-pass test keys for local development; replace both keys in
 production.
-For Przelewy24, keep `P24_SANDBOX=true` until the merchant flow and callbacks
-pass certification. The implementation uses the official transaction register
-and verify flow documented at <https://developers.przelewy24.pl/>.
+The dashboard includes a buycoffee.to widget for voluntary external support.
+Contributions do not automatically change a RecrBro plan or credit balance.
 
 Search results for every plan are persisted and presented directly in the
 website dashboard. Eligible offers are ranked by an AI-generated match
@@ -162,13 +158,10 @@ volume for the single SQLite writer.
    and `BACKEND_URL` as a runtime variable pointing to the API's public HTTPS
    URL.
 3. Set `FRONTEND_ORIGINS` on the API to the web service's exact HTTPS origin
-   (for example, `https://web-production-web.up.railway.app`) and
-   `PUBLIC_API_URL` to the API's exact HTTPS origin. Multiple allowed web
-   origins can be comma-separated; the first is used for payment
-   redirects. The legacy singular `FRONTEND_ORIGIN` remains supported.
-4. Map custom domains, update the Turnstile hostname and Przelewy24 callback
-   URLs, run a sandbox payment, and verify `/health` before enabling production
-   payments.
+   (for example, `https://web-production-web.up.railway.app`). Multiple allowed
+   web origins can be comma-separated. The legacy singular `FRONTEND_ORIGIN`
+   remains supported.
+4. Map custom domains, update the Turnstile hostname, and verify `/health`.
 5. Back up `/data/recrbro.db` regularly. Railway volumes are persistent, but
    application-level backup and restore drills remain your responsibility.
 

@@ -87,6 +87,12 @@ type Usage = {
   credits_bought: number;
   available_credits: number;
 };
+
+const COFFEE_OPTIONS = [
+  { size: "small", price: "8 zł" },
+  { size: "medium", price: "15 zł" },
+  { size: "large", price: "25 zł" },
+] as const;
 type SearchJob = {
   id: number;
   status: "queued" | "running" | "complete" | "failed";
@@ -656,21 +662,6 @@ function Dashboard({
     }
   }
 
-  async function upgrade(method: "przelewy24" | "blik") {
-    setBusy(true);
-    try {
-      const result = await api<{ redirect_url: string }>("/api/payments/checkout", token, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ method }),
-      });
-      window.location.assign(result.redirect_url);
-    } catch (error) {
-      setWarning(error instanceof Error ? error.message : "Checkout is unavailable.");
-      setBusy(false);
-    }
-  }
-
   return (
     <main>
       <header className="topbar">
@@ -753,7 +744,29 @@ function Dashboard({
             </div>
           </div>
           <div className="planDetail"><span>Current plan</span><strong>{user.plan === "premium" ? "Premium" : "Free"}</strong><small>Immediate results · up to 10 offers · CV upload included</small><small>{usage.available_credits.toFixed(2)} credits left</small></div>
-          <div className="upgradeBox"><strong>Buy 4 credits · 2 EUR</strong><p>Verified payment activates Premium. Actual AI usage is recorded in your balance history.</p><div><button onClick={() => upgrade("blik")} disabled={busy}>Pay with BLIK</button><button onClick={() => upgrade("przelewy24")} disabled={busy}>Przelewy24</button></div></div>
+          <div className="buyCoffee">
+            <div className="buyCoffeeHeading">
+              <h3>Postaw kawę za:</h3>
+            </div>
+            <div className="buyCoffeeOptions">
+              {COFFEE_OPTIONS.map(({ size, price }) => (
+                <a
+                  href={`https://buycoffee.to/recrbro?coffeeSize=${size}`}
+                  key={size}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                  title={`Postaw kawę za: ${price}`}
+                >
+                  <img
+                    src={`https://buycoffee.to/static/img/icons/coffee-${size}.svg`}
+                    alt={`${size} coffee icon`}
+                  />
+                  <span>{price}</span>
+                </a>
+              ))}
+            </div>
+            <p>Wsparcie jest obsługiwane przez buycoffee.to i nie zmienia automatycznie planu ani salda kredytów.</p>
+          </div>
         </aside>
       </section>
 

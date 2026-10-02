@@ -179,21 +179,6 @@ def initialize_database() -> None:
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
-            CREATE TABLE IF NOT EXISTS payments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                session_id TEXT NOT NULL UNIQUE,
-                order_id INTEGER,
-                amount_grosz INTEGER NOT NULL,
-                currency TEXT NOT NULL DEFAULT 'EUR',
-                method TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                completed_at TEXT,
-                CONSTRAINT fk_payments_user
-                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-            );
-
             CREATE TABLE IF NOT EXISTS balance_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -285,13 +270,6 @@ def initialize_database() -> None:
                OR lower(url) LIKE '%/vacancies'
             """)
         _fail_stale_searches(database)
-        payment_columns = {
-            row["name"] for row in database.execute("PRAGMA table_info(payments)")
-        }
-        if "currency" not in payment_columns:
-            database.execute(
-                "ALTER TABLE payments ADD COLUMN currency TEXT NOT NULL DEFAULT 'PLN'"
-            )
         if SEED_DEMO_USERS:
             seed_users = [
                 (1, "Free demo", "free@recrbro.local", "free", 10, 0, 0),
@@ -824,72 +802,6 @@ def search_owner_and_profile(search_id: int) -> tuple[User, Profile, SearchJob] 
     if user is None or profile is None or search is None:
         return None
     return user, profile, search
-
-
-def create_payment(
-    user_id: int,
-    session_id: str,
-    amount_grosz: int,
-    method: str,
-    currency: str = "EUR",
-) -> int:
-    with connection() as database:
-        cursor = database.execute(
-            """
-            INSERT INTO payments
-                (user_id, session_id, amount_grosz, currency, method, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'pending', ?)
-            """,
-            (user_id, session_id, amount_grosz, currency, method, _now()),
-        )
-        return int(cursor.lastrowid)
-
-
-def complete_payment(session_id: str, order_id: int) -> None:
-    with connection() as database:
-        row = database.execute(
-            """
-            SELECT id, user_id, amount_grosz, currency, status
-            FROM payments WHERE session_id = ?
-            """,
-            (session_id,),
-        ).fetchone()
-        if row is None:
-            raise LookupError("Payment not found.")
-        if row["status"] == "complete":
-            return
-        database.execute(
-            """
-            UPDATE payments
-            SET status = 'complete', order_id = ?, completed_at = ?
-            WHERE session_id = ?
-            """,
-            (order_id, _now(), session_id),
-        )
-        database.execute(
-            """
-            UPDATE users
-            SET plan = 'premium',
-                result_limit = 10
-            WHERE id = ?
-            """,
-            (row["user_id"],),
-        )
-        _record_balance_event(
-            database,
-            row["user_id"],
-            "purchase",
-            4,
-            f"payment:{row['id']}",
-        )
-
-
-def get_payment(session_id: str) -> dict[str, object] | None:
-    with connection() as database:
-        row = database.execute(
-            "SELECT * FROM payments WHERE session_id = ?", (session_id,)
-        ).fetchone()
-    return dict(row) if row else None
 
 
 def record_usage(

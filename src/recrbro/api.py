@@ -47,8 +47,6 @@ from recrbro.models import (
     AuthRequest,
     AuthResponse,
     BalanceEvent,
-    CheckoutRequest,
-    CheckoutResponse,
     CvAnalysis,
     Profile,
     ProfileUpdate,
@@ -59,7 +57,6 @@ from recrbro.models import (
     UsageSummary,
     User,
 )
-from recrbro.payments import create_checkout, verify_status
 from recrbro.services import (
     analyze_cv,
     build_search_query,
@@ -345,25 +342,6 @@ def usage(user: User = Depends(current_user)) -> UsageSummary:
 @app.get("/api/balance-history", response_model=list[BalanceEvent])
 def balance_history(user: User = Depends(current_user)) -> list[BalanceEvent]:
     return list_balance_events(user.id)
-
-
-@app.post("/api/payments/checkout", response_model=CheckoutResponse)
-def checkout(
-    payload: CheckoutRequest, user: User = Depends(current_user)
-) -> CheckoutResponse:
-    try:
-        return create_checkout(user, payload.method)
-    except RuntimeError as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
-
-
-@app.post("/api/payments/przelewy24/status")
-def payment_status(payload: dict[str, object]) -> dict[str, str]:
-    try:
-        verify_status(payload)
-    except (KeyError, ValueError, RuntimeError, LookupError) as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    return {"status": "ok"}
 
 
 add_agent_endpoint(app)

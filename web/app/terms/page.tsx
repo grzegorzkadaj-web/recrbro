@@ -13,7 +13,7 @@ export default function TermsPage() {
         <BrandLogo />
       </a>
       <article>
-        <p className="sectionNumber">Obowiązuje od 27 września 2026 r.</p>
+        <p className="sectionNumber">Obowiązuje od 2 października 2026 r.</p>
         <h1>Regulamin serwisu RecrBro</h1>
 
         <h2>1. Usługodawca</h2>
@@ -74,13 +74,13 @@ export default function TermsPage() {
           wyłącznie dane i dokumenty, do których wykorzystania jest uprawniony.
         </p>
 
-        <h2>7. Plany, kredyty i płatności</h2>
+        <h2>7. Plany, kredyty i wsparcie</h2>
         <p>
-          Zakres planów, limity i ceny są prezentowane w serwisie przed
-          zakupem. Płatności obsługuje zewnętrzny operator Przelewy24.
-          Przyznanie płatnych kredytów następuje po potwierdzeniu płatności.
-          Dostępne kredyty są pomniejszane zgodnie z rzeczywistym użyciem usług
-          AI i zasadami widocznymi w serwisie.
+          Zakres planów i limity są prezentowane w serwisie. Dostępne kredyty
+          są pomniejszane zgodnie z rzeczywistym użyciem usług AI i zasadami
+          widocznymi w serwisie. Dobrowolne wsparcie za pośrednictwem
+          buycoffee.to jest obsługiwane poza RecrBro i nie powoduje
+          automatycznej zmiany planu ani salda kredytów.
         </p>
 
         <h2>8. Dostępność i zmiany</h2>

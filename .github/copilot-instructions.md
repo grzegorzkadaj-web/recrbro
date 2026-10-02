@@ -41,7 +41,6 @@ strict TypeScript no-emit check rather than ESLint.
   search, and deterministic result ranking.
 - `src/recrbro/auth.py` owns password hashing, opaque sessions, and Turnstile
   registration verification.
-- `src/recrbro/payments.py` owns Przelewy24 registration and verification.
 - `src/recrbro/agent.py` exposes the LangGraph agent through AG-UI at `/agent`.
 - `web/app/api/copilotkit/route.ts` is the CopilotKit Runtime proxy between the
   browser and the Python AG-UI endpoint.
@@ -65,17 +64,16 @@ strict TypeScript no-emit check rather than ESLint.
   must produce explicit errors or visibly labelled degraded behavior; never
   invent job data.
 - Keep plan and credit enforcement in the backend. New users start Free and may
-  run two queued searches with up to five results each and upload CVs. A
-  verified 2 EUR payment adds four credits and restores Premium. Premium can
-  request up to ten immediate results. Credit balance comes from append-only
+  run two queued searches with up to five results each and upload CVs. Premium
+  can request up to ten immediate results. Credit balance comes from append-only
   balance events; AI USD cost is converted with the current EUR/USD rate and
   multiplied by `CREDIT_COST_MULTIPLIER` (default 10). Exhausted Free searches
   must not incur AI debt; use visibly labelled deterministic content checks.
 - Never restore user-ID selection as an authorization mechanism. Production
   user data is accessed only through the authenticated `/api/profile`,
-  `/api/searches`, `/api/usage`, and payment endpoints.
-- Keep payment fulfillment server-side: only a successfully signed and verified
-  Przelewy24 status callback can upgrade an account.
+  `/api/searches` and `/api/usage` endpoints.
+- The buycoffee.to widget is voluntary external support and must not
+  automatically change a user's plan or credit balance.
 - Keep the scheduled worker endpoint protected by `WORKER_SECRET`; worker
   failures must persist as failed searches rather than appearing successful.
 - Store list-valued profile fields as JSON arrays in SQLite and expose them as

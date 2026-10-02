@@ -77,11 +77,11 @@ It should implement sorting strategy according to the following criteria: skills
 - results are presented on the website
 - there should be a delay for executing next request (configurable parameter, 1h by default)
 ## Premium
-- a 2 EUR purchase adds 4 credits and restores Premium
-- balance is tracked as append-only purchase and actual AI usage events
+- balance is tracked as append-only credit and actual AI usage events
 - AI USD cost is converted using the current EUR/USD rate and multiplied by
   the configurable credit-cost multiplier (default 10)
-- payment method is Przelewy24 and BLIK
+- voluntary support is available through buycoffee.to and does not
+  automatically change the user's plan or credit balance
 - results are presented on the screen
 - user gets up to 10 job offers
 - when costs reach 50% of fee then ai model from Free plan should be used
@@ -106,6 +106,6 @@ It should implement sorting strategy according to the following criteria: skills
 - CopilotKit provides an embedded assistant for refining search criteria
 - Free searches are queued, rate-limited, run by a protected scheduled worker,
   and presented in the website dashboard
-- Premium upgrades use the Przelewy24 hosted checkout and support BLIK
+- the dashboard embeds buycoffee.to links for voluntary support
 - production deployment uses separate frontend and API containers with one
   persistent SQLite volume attached to a single API instance

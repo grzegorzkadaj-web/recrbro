@@ -54,15 +54,8 @@ FRONTEND_ORIGINS = _normalized_origins(
     os.getenv("FRONTEND_ORIGINS")
     or os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
 )
-FRONTEND_ORIGIN = FRONTEND_ORIGINS[0]
-PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "http://127.0.0.1:8000")
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "168"))
 SEED_DEMO_USERS = os.getenv("SEED_DEMO_USERS", "true").casefold() == "true"
 APP_ENV = os.getenv("APP_ENV", "development")
 APP_SECRET = os.getenv("APP_SECRET", "development-only-change-me")
 TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY")
-P24_MERCHANT_ID = os.getenv("P24_MERCHANT_ID")
-P24_POS_ID = os.getenv("P24_POS_ID")
-P24_API_KEY = os.getenv("P24_API_KEY")
-P24_CRC = os.getenv("P24_CRC")
-P24_SANDBOX = os.getenv("P24_SANDBOX", "true").casefold() == "true"
