@@ -44,9 +44,9 @@ export default function TermsPage() {
         <h2>4. Źródła ofert i odpowiedzialność</h2>
         <p>
           <strong>
-            Źródła ofert pracy są pozyskiwane za pośrednictwem usługi Tavily.
-            Usługodawca nie odpowiada za ich jakość, kompletność, dokładność,
-            aktualność ani dostępność.
+            Oferty pracy są pozyskiwane za pośrednictwem usługi Tavily oraz
+            publicznego źródła CzyJestEldorado. Usługodawca nie odpowiada za
+            ich jakość, kompletność, dokładność, aktualność ani dostępność.
           </strong>
         </p>
         <p>
