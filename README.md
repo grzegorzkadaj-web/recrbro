@@ -1,9 +1,9 @@
 # RecrBro
 
 RecrBro is an authenticated job-search assistant that builds a candidate
-profile, discovers live individual offers across job boards and employer sites
-through Tavily, rejects inactive or location-ineligible offers, and ranks the
-remaining roles against the candidate's requirements.
+profile, discovers live individual offers through Tavily and the
+CzyJestEldorado Remote MCP server, rejects inactive or location-ineligible
+offers, and ranks the remaining roles against the candidate's requirements.
 
 ## Product behavior
 
@@ -36,9 +36,10 @@ remaining roles against the candidate's requirements.
   execution, security headers, and payment callback.
 - `src/recrbro/db.py`: SQLite schema, migrations, sessions, profiles, searches,
   offers, payments, and usage events.
-- `src/recrbro/services.py`: PDF extraction, AI analysis, multi-source Tavily
-  discovery, source-aware URL validation, and deterministic ranking. LinkedIn
-  additionally receives authoritative direct-page validation.
+- `src/recrbro/services.py`: PDF extraction, AI analysis, Tavily and
+  CzyJestEldorado MCP discovery, source-aware URL validation, and deterministic
+  ranking. LinkedIn and CzyJestEldorado offers additionally receive
+  authoritative direct-page validation.
 - `src/recrbro/payments.py`: Przelewy24 registration and verification.
 - `src/recrbro/agent.py`: LangGraph agent exposed over AG-UI.
 - `web`: responsive Next.js 16 and CopilotKit interface.
@@ -88,7 +89,8 @@ before horizontal scaling.
 ## Local setup
 
 Requirements: Python 3.10+, [uv](https://docs.astral.sh/uv/), Node.js 20.9+,
-Tavily credentials, and OpenAI credentials.
+and OpenAI credentials. Tavily credentials enable the broad web source; the
+public CzyJestEldorado MCP source requires no authentication.
 
 ```powershell
 Copy-Item .env.example .env
@@ -134,6 +136,12 @@ website dashboard. Eligible offers are ranked by an AI-generated match
 percentage against the complete candidate profile, with the AI's concise fit
 and gap explanation shown on each result. LangSmith tracing uses the standard
 `LANGSMITH_*` variables.
+
+Job discovery uses `CZYJESTELDORADO_MCP_URL` (default
+`https://czyjesteldorado.pl/_mcp`) alongside Tavily. Set the URL to an empty
+value to disable this experimental source. `CZYJESTELDORADO_MCP_TIMEOUT_SECONDS`
+controls its HTTP timeout. A failure in one source is reported as a warning
+when the other source still returns candidates.
 
 ## Railway deployment
 

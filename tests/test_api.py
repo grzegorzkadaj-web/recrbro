@@ -19,6 +19,7 @@ from recrbro.config import _normalized_origins
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(services, "CZYJESTELDORADO_MCP_URL", "")
     monkeypatch.setattr(db, "eur_usd_rate", lambda: 1.25)
     monkeypatch.setattr(
         api_module,
@@ -1155,6 +1156,129 @@ def test_search_merges_results_from_focused_queries(
         and "include_domains_mode" not in call
         for call in search_calls
     )
+
+
+def test_eldorado_mcp_search_maps_filters_and_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[dict[str, object], str | None]] = []
+    job_payload = {
+        "jobs": [
+            {
+                "title": "Python Developer",
+                "company": "Example",
+                "keywords": ["Python", "FastAPI"],
+                "cities": ["Warszawa"],
+                "work_modes": ["remote"],
+                "contract_types": ["b2b"],
+                "workload_types": ["full_time"],
+                "seniority": "mid",
+                "salary_from": 18000,
+                "salary_to": 22000,
+                "url": (
+                    "https://czyjesteldorado.pl/praca/123-python-developer-example"
+                    "?utm_source=mcp"
+                ),
+                "posted_at": "2026-10-01T12:00:00+02:00",
+            }
+        ],
+        "shown_results": 1,
+        "total_results": 1,
+    }
+
+    def fake_mcp_post(
+        payload: dict[str, object], session_id: str | None = None
+    ) -> tuple[dict, str | None]:
+        calls.append((payload, session_id))
+        method = payload["method"]
+        if method == "initialize":
+            return {"result": {"protocolVersion": "2025-06-18"}}, "session-1"
+        if method == "notifications/initialized":
+            return {}, session_id
+        return {
+            "result": {"content": [{"type": "text", "text": json.dumps(job_payload)}]}
+        }, session_id
+
+    monkeypatch.setattr(services, "CZYJESTELDORADO_MCP_URL", "https://example.test")
+    monkeypatch.setattr(services, "_mcp_post", fake_mcp_post)
+    profile = services.Profile(
+        user_id=2,
+        core_skills=["Python", "FastAPI"],
+        location="Warszawa",
+        work_modes=["remote", "on-site"],
+        minimum_salary=18000,
+        contract_types=["B2B", "employment"],
+    )
+
+    results = services._search_eldorado_jobs(profile, 10)
+
+    assert [call[0]["method"] for call in calls] == [
+        "initialize",
+        "notifications/initialized",
+        "tools/call",
+    ]
+    params = calls[2][0]["params"]
+    assert isinstance(params, dict)
+    arguments = params["arguments"]
+    assert isinstance(arguments, dict)
+    assert arguments["phrase"] == "Python FastAPI Warszawa"
+    assert arguments["minSalary"] == 18000
+    assert arguments["workModes"] == ["remote", "office"]
+    assert arguments["contractTypes"] == ["b2b", "employment_contract"]
+    assert list(results) == [
+        "https://czyjesteldorado.pl/praca/123-python-developer-example"
+    ]
+    assert next(iter(results.values()))["company"] == "Example"
+
+
+def test_search_merges_tavily_and_eldorado_results(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    accept_job_analysis: None,
+) -> None:
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            assert api_key == "test-key"
+
+        def search(self, **_: object) -> dict:
+            return {
+                "results": [
+                    {
+                        "title": "Python Developer - Tavily Company",
+                        "url": "https://example.com/jobs/python",
+                        "content": "Python role in Poland.",
+                        "raw_content": "Apply now for this active Python role.",
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
+    monkeypatch.setattr(services, "CZYJESTELDORADO_MCP_URL", "https://example.test")
+    monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
+    monkeypatch.setattr(
+        services,
+        "_search_eldorado_jobs",
+        lambda _profile, _limit: {
+            "https://czyjesteldorado.pl/praca/123-python-developer-eldorado": {
+                "title": "Python Developer",
+                "company": "Eldorado Company",
+                "url": (
+                    "https://czyjesteldorado.pl/praca/" "123-python-developer-eldorado"
+                ),
+                "content": "Python remote B2B role in Poland.",
+                "source": "czyjesteldorado",
+                "source_page_content": "Apply now for this active Python role.",
+            }
+        },
+    )
+
+    response = client.post("/api/users/2/search", json={"max_results": 2})
+
+    assert response.status_code == 200
+    assert {offer["company"] for offer in response.json()["offers"]} == {
+        "Tavily Company",
+        "Eldorado Company",
+    }
 
 
 def test_tavily_errors_return_service_unavailable(

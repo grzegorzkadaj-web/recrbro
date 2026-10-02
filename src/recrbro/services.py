@@ -34,6 +34,8 @@ from tavily.errors import TimeoutError as TavilyTimeoutError
 from tavily.errors import UsageLimitExceededError
 
 from recrbro.config import (
+    CZYJESTELDORADO_MCP_TIMEOUT_SECONDS,
+    CZYJESTELDORADO_MCP_URL,
     OPENAI_API_KEY,
     OPENAI_INPUT_COST_PER_MILLION,
     OPENAI_JOB_ANALYSIS_MODEL,
@@ -69,6 +71,20 @@ GENERAL_TRACKING_QUERY_KEYS = {
     "ref",
     "referrer",
     "source",
+}
+MCP_PROTOCOL_VERSION = "2025-06-18"
+ELDORADO_CONTRACT_TYPES = {
+    "b2b": "b2b",
+    "employment": "employment_contract",
+    "employment contract": "employment_contract",
+    "umowa o pracę": "employment_contract",
+    "umowa o prace": "employment_contract",
+    "mandate": "mandate_contract",
+    "mandate contract": "mandate_contract",
+    "umowa zlecenie": "mandate_contract",
+    "internship": "internship",
+    "staż": "internship",
+    "staz": "internship",
 }
 TAVILY_ERRORS = (
     BadRequestError,
@@ -119,6 +135,10 @@ class JobAssessment(BaseModel):
 
 class JobAssessmentBatch(BaseModel):
     assessments: list[JobAssessment]
+
+
+class JobSourceError(RuntimeError):
+    pass
 
 
 class _VisibleTextParser(HTMLParser):
@@ -378,6 +398,196 @@ def build_search_queries(profile: Profile, limit: int) -> list[str]:
     return _unique(queries)[:query_limit]
 
 
+def _eldorado_search_arguments(profile: Profile) -> dict[str, object]:
+    inferred_location, target_roles = _additional_search_context(profile)
+    phrase = " ".join(
+        part
+        for part in (
+            " ".join(target_roles[:2]),
+            " ".join(profile.core_skills[:4]),
+            profile.location.strip() or inferred_location,
+        )
+        if part
+    )
+    work_modes = [
+        {"on-site": "office"}.get(mode, mode)
+        for mode in profile.work_modes
+        if mode in {"remote", "hybrid", "on-site"}
+    ]
+    contract_types = _unique(
+        ELDORADO_CONTRACT_TYPES[contract.casefold().strip()]
+        for contract in profile.contract_types
+        if contract.casefold().strip() in ELDORADO_CONTRACT_TYPES
+    )
+    return {
+        "phrase": phrase,
+        "sortOrder": "recommended",
+        "minSalary": profile.minimum_salary,
+        "workModes": work_modes,
+        "contractTypes": contract_types,
+        "workloadTypes": [],
+        "seniority": [],
+        "postedWithin": None,
+    }
+
+
+def _decode_mcp_response(body: str, content_type: str) -> dict:
+    if "text/event-stream" in content_type:
+        data_lines = [
+            line.removeprefix("data:").strip()
+            for line in body.splitlines()
+            if line.startswith("data:")
+        ]
+        if not data_lines:
+            raise JobSourceError("CzyJestEldorado MCP returned an empty event stream.")
+        body = data_lines[-1]
+    try:
+        response = json.loads(body)
+    except json.JSONDecodeError as error:
+        raise JobSourceError(
+            "CzyJestEldorado MCP returned an invalid JSON response."
+        ) from error
+    if not isinstance(response, dict):
+        raise JobSourceError("CzyJestEldorado MCP returned an invalid response.")
+    if response.get("error"):
+        error = response["error"]
+        message = error.get("message") if isinstance(error, dict) else str(error)
+        raise JobSourceError(f"CzyJestEldorado MCP error: {message}")
+    return response
+
+
+def _mcp_post(
+    payload: dict[str, object], session_id: str | None = None
+) -> tuple[dict, str | None]:
+    if not CZYJESTELDORADO_MCP_URL:
+        raise JobSourceError("CzyJestEldorado MCP is not configured.")
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+        "User-Agent": "Recrbro/0.1",
+    }
+    if session_id:
+        headers["Mcp-Session-Id"] = session_id
+    request = Request(
+        CZYJESTELDORADO_MCP_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=CZYJESTELDORADO_MCP_TIMEOUT_SECONDS) as response:
+            body = response.read().decode("utf-8")
+            next_session_id = response.headers.get("Mcp-Session-Id") or session_id
+            if not body:
+                return {}, next_session_id
+            return (
+                _decode_mcp_response(
+                    body, response.headers.get("Content-Type", "application/json")
+                ),
+                next_session_id,
+            )
+    except (HTTPError, URLError, TimeoutError, ValueError) as error:
+        raise JobSourceError(f"CzyJestEldorado MCP request failed: {error}") from error
+
+
+def _eldorado_result_content(job: dict) -> str:
+    fields = [
+        str(job.get("title") or ""),
+        str(job.get("company") or ""),
+        " ".join(str(value) for value in job.get("keywords") or []),
+        " ".join(str(value) for value in job.get("cities") or []),
+        " ".join(str(value) for value in job.get("work_modes") or []),
+        " ".join(str(value) for value in job.get("contract_types") or []),
+        " ".join(str(value) for value in job.get("workload_types") or []),
+        str(job.get("seniority") or ""),
+        str(job.get("salary_from") or ""),
+        str(job.get("salary_to") or ""),
+        str(job.get("posted_at") or ""),
+    ]
+    return " ".join(field for field in fields if field).strip()
+
+
+def _search_eldorado_jobs(profile: Profile, limit: int) -> dict[str, dict]:
+    initialize, session_id = _mcp_post(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "recrbro", "version": "0.1.0"},
+            },
+        }
+    )
+    if not session_id or "result" not in initialize:
+        raise JobSourceError("CzyJestEldorado MCP did not initialize a valid session.")
+    _mcp_post({"jsonrpc": "2.0", "method": "notifications/initialized"}, session_id)
+    response, _ = _mcp_post(
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "search_jobs",
+                "arguments": _eldorado_search_arguments(profile),
+            },
+        },
+        session_id,
+    )
+    result = response.get("result")
+    if not isinstance(result, dict) or result.get("isError"):
+        raise JobSourceError("CzyJestEldorado MCP job search failed.")
+    content = result.get("content")
+    if not isinstance(content, list):
+        raise JobSourceError("CzyJestEldorado MCP returned no job data.")
+    text = next(
+        (
+            item.get("text")
+            for item in content
+            if isinstance(item, dict)
+            and item.get("type") == "text"
+            and isinstance(item.get("text"), str)
+        ),
+        None,
+    )
+    if text is None:
+        raise JobSourceError("CzyJestEldorado MCP returned no job data.")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise JobSourceError(
+            "CzyJestEldorado MCP returned invalid job data."
+        ) from error
+    jobs = payload.get("jobs") if isinstance(payload, dict) else None
+    if not isinstance(jobs, list):
+        raise JobSourceError("CzyJestEldorado MCP returned invalid job data.")
+
+    results: dict[str, dict] = {}
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        url = _canonical_external_url(str(job.get("url") or ""))
+        parsed_url = urlparse(url or "")
+        if (
+            url is None
+            or (parsed_url.hostname or "").casefold() != "czyjesteldorado.pl"
+            or not parsed_url.path.startswith("/praca/")
+        ):
+            continue
+        results[url] = {
+            "title": str(job.get("title") or ""),
+            "company": str(job.get("company") or ""),
+            "url": url,
+            "content": _eldorado_result_content(job),
+            "source": "czyjesteldorado",
+        }
+        if len(results) >= limit:
+            break
+    return results
+
+
 def _company_from_title(title: str, url: str) -> str:
     for separator in (" | ", " - ", " at "):
         if separator in title:
@@ -388,7 +598,13 @@ def _company_from_title(title: str, url: str) -> str:
 
 def _offer_page_text(result: dict) -> str:
     parts: list[str] = []
-    for field in ("title", "content", "raw_content", "linkedin_page_content"):
+    for field in (
+        "title",
+        "content",
+        "raw_content",
+        "source_page_content",
+        "linkedin_page_content",
+    ):
         value = str(result.get(field) or "")
         if not value:
             continue
@@ -721,6 +937,39 @@ def _resolve_linkedin_page(
         return None
 
 
+def _fetch_external_page(url: str) -> str | None:
+    request = Request(
+        url,
+        method="GET",
+        headers={"User-Agent": "Mozilla/5.0 (compatible; Recrbro/0.1)"},
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            return response.read(2_000_000).decode("utf-8", errors="ignore")
+    except (HTTPError, URLError, TimeoutError, ValueError):
+        return None
+
+
+def _populate_eldorado_page_content(results_by_url: dict[str, dict]) -> int:
+    eldorado_urls = [
+        url
+        for url, result in results_by_url.items()
+        if result.get("source") == "czyjesteldorado"
+        and not result.get("source_page_content")
+    ]
+    if not eldorado_urls:
+        return 0
+    with ThreadPoolExecutor(max_workers=min(8, len(eldorado_urls))) as executor:
+        pages = list(executor.map(_fetch_external_page, eldorado_urls))
+    failed = 0
+    for url, page in zip(eldorado_urls, pages, strict=True):
+        if page:
+            results_by_url[url]["source_page_content"] = page
+        else:
+            failed += 1
+    return failed
+
+
 def _verify_linkedin_urls(
     results_by_url: dict[str, dict],
 ) -> tuple[dict[str, dict], dict[str, dict], int]:
@@ -769,7 +1018,8 @@ def _verify_linkedin_urls(
 def _is_active_offer(result: dict) -> bool:
     direct_page = str(result.get("linkedin_page_content") or "")
     extracted_page = str(result.get("raw_content") or "")
-    if not direct_page and not extracted_page:
+    source_page = str(result.get("source_page_content") or "")
+    if not direct_page and not extracted_page and not source_page:
         return False
     if direct_page and any(
         marker in direct_page.casefold() for marker in CLOSED_OFFER_MARKERS
@@ -804,6 +1054,7 @@ def _offer_analysis_text(result: dict) -> str:
         f"Title: {str(result.get('title') or '')[:500]}",
         f"Search snippet: {str(result.get('content') or '')[:2500]}",
         f"Extracted page: {str(result.get('raw_content') or '')[:7000]}",
+        f"Direct source page: {str(result.get('source_page_content') or '')[:7000]}",
         f"Direct source page: {direct_page[:7000]}",
         f"Status excerpts: {_status_excerpts(direct_page)[:4000]}",
     ]
@@ -1022,7 +1273,9 @@ def _populate_missing_page_content(
     client: TavilyClient, results_by_url: dict[str, dict]
 ) -> None:
     missing_urls = [
-        url for url, result in results_by_url.items() if not result.get("raw_content")
+        url
+        for url, result in results_by_url.items()
+        if not result.get("raw_content") and not result.get("source_page_content")
     ]
     for start in range(0, len(missing_urls), 20):
         response = client.extract(
@@ -1134,7 +1387,7 @@ def _build_job_offers(
             counts["criteria_mismatch"] += 1
             continue
         title = result.get("title") or _job_title_from_url(url)
-        company = _company_from_title(title, url)
+        company = result.get("company") or _company_from_title(title, url)
         if any(name in company.casefold() for name in excluded):
             counts["excluded_company"] += 1
             continue
@@ -1170,118 +1423,155 @@ def _build_job_offers(
 
 
 def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str | None]:
-    if not TAVILY_API_KEY:
+    if not TAVILY_API_KEY and not CZYJESTELDORADO_MCP_URL:
         raise RuntimeError(
-            "TAVILY_API_KEY is not configured. Add it to .env to search live job data."
+            "No job source is configured. Set TAVILY_API_KEY or "
+            "CZYJESTELDORADO_MCP_URL."
         )
 
-    client = TavilyClient(api_key=TAVILY_API_KEY)
+    client = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
     query = build_search_query(profile)
     results_by_url: dict[str, dict] = {}
     candidate_limit = min(max(limit * 3, 20), 100)
     search_queries = build_search_queries(profile, limit)
-    results_per_query = min(20, math.ceil(candidate_limit / len(search_queries)))
     discovered_count = 0
     duplicate_count = 0
     collection_job_count = 0
+    eldorado_count = 0
+    eldorado_page_failures = 0
+    source_warnings: list[str] = []
 
-    try:
-        for search_query in search_queries:
-            response = client.search(
-                query=search_query,
-                search_depth="advanced",
-                max_results=results_per_query,
-                topic="general",
-                include_raw_content="text",
+    if CZYJESTELDORADO_MCP_URL:
+        try:
+            eldorado_limit = (
+                math.ceil(candidate_limit / 2)
+                if client is not None
+                else candidate_limit
             )
-            for result in response.get("results", []):
-                discovered_count += 1
-                url = result.get("url", "")
-                canonical_url = (
-                    _canonical_linkedin_job_url(url)
-                    or _canonical_linkedin_collection_url(url)
-                    or _canonical_external_url(url)
-                )
-                if canonical_url is None:
-                    continue
-                if canonical_url in results_by_url:
-                    duplicate_count += 1
-                    existing = results_by_url[canonical_url]
-                    if not existing.get("raw_content") and result.get("raw_content"):
-                        existing["raw_content"] = result["raw_content"]
-                    continue
-                result["url"] = canonical_url
-                results_by_url[canonical_url] = result
-                if len(results_by_url) >= candidate_limit:
+            eldorado_results = _search_eldorado_jobs(profile, eldorado_limit)
+            eldorado_count = len(eldorado_results)
+            results_by_url.update(eldorado_results)
+        except JobSourceError as error:
+            source_warnings.append(str(error))
+
+    if client is not None:
+        tavily_limit = max(candidate_limit - len(results_by_url), 0)
+        results_per_query = min(20, math.ceil(tavily_limit / len(search_queries)))
+        try:
+            for search_query in search_queries:
+                if not tavily_limit:
                     break
-            if len(results_by_url) >= candidate_limit:
-                break
+                response = client.search(
+                    query=search_query,
+                    search_depth="advanced",
+                    max_results=results_per_query,
+                    topic="general",
+                    include_raw_content="text",
+                )
+                for result in response.get("results", []):
+                    discovered_count += 1
+                    url = result.get("url", "")
+                    canonical_url = (
+                        _canonical_linkedin_job_url(url)
+                        or _canonical_linkedin_collection_url(url)
+                        or _canonical_external_url(url)
+                    )
+                    if canonical_url is None:
+                        continue
+                    if canonical_url in results_by_url:
+                        duplicate_count += 1
+                        existing = results_by_url[canonical_url]
+                        if not existing.get("raw_content") and result.get(
+                            "raw_content"
+                        ):
+                            existing["raw_content"] = result["raw_content"]
+                        continue
+                    result["url"] = canonical_url
+                    results_by_url[canonical_url] = result
+                    if discovered_count >= tavily_limit:
+                        break
+                if discovered_count >= tavily_limit:
+                    break
+        except TAVILY_ERRORS as error:
+            source_warnings.append(f"Tavily search failed: {error}")
+    else:
+        source_warnings.append(
+            "TAVILY_API_KEY is not configured; search used CzyJestEldorado only."
+        )
 
-        linkedin_results = {
-            url: result
-            for url, result in results_by_url.items()
-            if _is_linkedin_jobs_url(url)
-        }
-        external_results = {
-            url: result
-            for url, result in results_by_url.items()
-            if url not in linkedin_results
-        }
-        job_results, collection_results, invalid_link_count = _verify_linkedin_urls(
-            linkedin_results
+    if not results_by_url and source_warnings:
+        if len(source_warnings) == 1:
+            raise RuntimeError(source_warnings[0])
+        raise RuntimeError("Job search failed: " + "; ".join(source_warnings))
+
+    linkedin_results = {
+        url: result
+        for url, result in results_by_url.items()
+        if _is_linkedin_jobs_url(url)
+    }
+    external_results = {
+        url: result
+        for url, result in results_by_url.items()
+        if url not in linkedin_results
+    }
+    job_results, collection_results, invalid_link_count = _verify_linkedin_urls(
+        linkedin_results
+    )
+    for url, result in external_results.items():
+        destination = (
+            collection_results if _looks_like_collection(result) else job_results
         )
-        for url, result in external_results.items():
-            destination = (
-                collection_results if _looks_like_collection(result) else job_results
-            )
-            destination[url] = result
-        _populate_missing_page_content(client, job_results)
-        _populate_missing_page_content(client, collection_results)
-        collection_candidates = _extract_collection_jobs(
-            collection_results,
-            set(job_results),
-            candidate_limit,
-        )
-        collection_candidates.update(
-            _search_collection_jobs(
-                client,
-                profile,
+        destination[url] = result
+    eldorado_page_failures = _populate_eldorado_page_content(job_results)
+    if client is not None:
+        try:
+            _populate_missing_page_content(client, job_results)
+            _populate_missing_page_content(client, collection_results)
+            collection_candidates = _extract_collection_jobs(
                 collection_results,
-                set(job_results) | set(collection_candidates),
-                candidate_limit - len(collection_candidates),
+                set(job_results),
+                candidate_limit,
             )
-        )
-        if collection_candidates:
-            linkedin_collection_candidates = {
-                url: result
-                for url, result in collection_candidates.items()
-                if _is_linkedin_jobs_url(url)
-            }
-            collection_jobs, _, collection_invalid_count = _verify_linkedin_urls(
-                linkedin_collection_candidates
+            collection_candidates.update(
+                _search_collection_jobs(
+                    client,
+                    profile,
+                    collection_results,
+                    set(job_results) | set(collection_candidates),
+                    candidate_limit - len(collection_candidates),
+                )
             )
-            invalid_link_count += collection_invalid_count
-            collection_jobs.update(
-                {
+            if collection_candidates:
+                linkedin_collection_candidates = {
                     url: result
                     for url, result in collection_candidates.items()
-                    if url not in linkedin_collection_candidates
-                    and not _looks_like_collection(result)
+                    if _is_linkedin_jobs_url(url)
                 }
-            )
-            _populate_missing_page_content(client, collection_jobs)
-            collection_job_count = len(collection_jobs)
-            for url, result in collection_jobs.items():
-                job_results.setdefault(url, result)
-    except TAVILY_ERRORS as error:
-        raise RuntimeError(f"Tavily search failed: {error}") from error
+                collection_jobs, _, collection_invalid_count = _verify_linkedin_urls(
+                    linkedin_collection_candidates
+                )
+                invalid_link_count += collection_invalid_count
+                collection_jobs.update(
+                    {
+                        url: result
+                        for url, result in collection_candidates.items()
+                        if url not in linkedin_collection_candidates
+                        and not _looks_like_collection(result)
+                    }
+                )
+                _populate_missing_page_content(client, collection_jobs)
+                collection_job_count = len(collection_jobs)
+                for url, result in collection_jobs.items():
+                    job_results.setdefault(url, result)
+        except TAVILY_ERRORS as error:
+            source_warnings.append(f"Tavily content extraction failed: {error}")
 
     excluded = {company.casefold() for company in profile.excluded_companies}
     offers, counts = _build_job_offers(profile, job_results, excluded)
     offers.sort(key=lambda offer: offer.score or 0, reverse=True)
     offers = offers[:limit]
 
-    warning = None
+    warning_parts = list(source_warnings)
     if len(offers) < limit:
         filtered_count = (
             invalid_link_count
@@ -1303,6 +1593,8 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
         diagnostics = (
             f" Diagnostics: {len(search_queries)} queries, {discovered_count} results, "
             f"{len(results_by_url)} unique job-source URLs, {duplicate_count} duplicates, "
+            f"{eldorado_count} CzyJestEldorado results, "
+            f"{eldorado_page_failures} CzyJestEldorado page fetch failures, "
             f"{invalid_link_count} unresolved, {counts['collection']} collection pages, "
             f"{counts['non_specific']} non-offer pages, "
             f"{counts['inactive'] + counts['ai_inactive']} "
@@ -1312,10 +1604,11 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
             f"{collection_job_count} jobs extracted from collection pages, and "
             f"{counts['tavily_fallback']} Tavily-content fallbacks."
         )
-        warning = (
-            f"Tavily returned {len(offers)} verified individual offers for this "
+        warning_parts.append(
+            f"Job sources returned {len(offers)} verified individual offers for this "
             f"query; the plan allows up to {limit}.{filter_note}{diagnostics}"
         )
+    warning = " ".join(warning_parts) or None
     return query, offers, warning
 
 

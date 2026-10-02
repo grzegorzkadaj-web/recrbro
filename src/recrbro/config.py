@@ -13,6 +13,12 @@ DATABASE_PATH = Path(
     os.getenv("RECRBRO_DATABASE_PATH", PROJECT_ROOT / "data" / "recrbro.db")
 )
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+CZYJESTELDORADO_MCP_URL = os.getenv(
+    "CZYJESTELDORADO_MCP_URL", "https://czyjesteldorado.pl/_mcp"
+).strip()
+CZYJESTELDORADO_MCP_TIMEOUT_SECONDS = int(
+    os.getenv("CZYJESTELDORADO_MCP_TIMEOUT_SECONDS", "30")
+)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 OPENAI_JOB_ANALYSIS_MODEL = os.getenv("OPENAI_JOB_ANALYSIS_MODEL", "gpt-5-nano")

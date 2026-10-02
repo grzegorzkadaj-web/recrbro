@@ -57,10 +57,13 @@ strict TypeScript no-emit check rather than ESLint.
 - Keep the project Python 3.10+ compatible (`requires-python = ">=3.10"`).
 - Prefer `uv` commands over raw `python`/`pip` to match the project toolchain.
 - Keep environment and secrets handling separate from application logic.
-- Use `TAVILY_API_KEY` for live searches and `OPENAI_API_KEY` for the assistant,
-  AI CV extraction, and AI validation of offer activity and location eligibility.
-  Missing keys must produce explicit errors or visibly labelled degraded
-  behavior; never invent job data.
+- Use Tavily and the public CzyJestEldorado Remote MCP server as independent job
+  sources. `TAVILY_API_KEY` enables broad web discovery and extraction;
+  `CZYJESTELDORADO_MCP_URL` configures the Polish IT aggregator. Use
+  `OPENAI_API_KEY` for the assistant, AI CV extraction, and AI validation of
+  offer activity and location eligibility. Missing keys or unavailable sources
+  must produce explicit errors or visibly labelled degraded behavior; never
+  invent job data.
 - Keep plan and credit enforcement in the backend. New users start Free and may
   run two queued searches with up to five results each and upload CVs. A
   verified 2 EUR payment adds four credits and restores Premium. Premium can
@@ -84,9 +87,10 @@ strict TypeScript no-emit check rather than ESLint.
   from employer sites and job boards are valid when their extracted content
   passes active-offer and location checks. Canonicalize each source sensibly
   and remove tracking parameters.
-- Search candidates must be checked against Tavily's extracted page content
-  before persistence. Reject closed/expired markers such as "No longer
-  accepting applications"; do not rely only on search-result snippets.
+- Search candidates must be checked against extracted or directly fetched page
+  content before persistence. Reject closed/expired markers such as "No longer
+  accepting applications"; do not rely only on search-result snippets or MCP
+  metadata.
 - Resolve LinkedIn links before presenting them. The final location must remain
   a numeric `/jobs/view/{id}` page; reject redirects to `/jobs/*-jobs` listing
   pages, including URLs marked with `expired_jd_redirect`, and persist the
@@ -95,6 +99,9 @@ strict TypeScript no-emit check rather than ESLint.
   because Tavily snippets can omit LinkedIn's `closed-job` banner. Reject a
   result when the direct HTML contains a closed/expired marker even if Tavily's
   extracted content looks active.
+- Treat the directly fetched CzyJestEldorado offer page as authoritative for
+  active status; reject MCP candidates whose offer page cannot be fetched or
+  contains a closed/expired marker.
 - Never return collection/search pages as results. Extract individual offer links
   from collection pages, fetch their contents, and run them through the same
   active-status, criteria, ranking, and canonicalization checks as direct results.
