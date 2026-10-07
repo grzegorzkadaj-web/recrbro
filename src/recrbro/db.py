@@ -25,6 +25,7 @@ from recrbro.models import (
     UsageSummary,
     User,
 )
+from recrbro.offer_identity import offer_identity
 
 LIST_FIELDS = {
     "core_skills",
@@ -751,17 +752,23 @@ def get_search_results(user_id: int) -> SearchResults:
         if not rows:
             return SearchResults()
         current = _search_from_row(database, rows[0])
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
         archival: list[JobOffer] = []
         for row in rows[1:]:
             if row["status"] != "complete":
                 continue
             for offer in _search_from_row(database, row).offers:
-                url = str(offer.url)
-                if url in seen:
+                identity = offer_identity(offer.title, offer.company)
+                if identity in seen:
                     continue
-                seen.add(url)
+                seen.add(identity)
                 archival.append(offer)
+        if current is not None:
+            current.offers = [
+                offer
+                for offer in current.offers
+                if offer_identity(offer.title, offer.company) not in seen
+            ]
     return SearchResults(current=current, archival=archival)
 
 

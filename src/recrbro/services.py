@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import math
 import re
-import unicodedata
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
@@ -47,6 +46,7 @@ from recrbro.config import (
 )
 from recrbro.db import ensure_available_credit, get_user, record_usage, usage_summary
 from recrbro.models import CvAnalysis, JobOffer, Profile, ProfileUpdate
+from recrbro.offer_identity import offer_identity
 
 CLOSED_OFFER_MARKERS = (
     "no longer accepting applications",
@@ -114,33 +114,6 @@ ADDITIONAL_ROLE_PATTERN = re.compile(
     r"(?P<role>[A-Za-z][A-Za-z0-9 +#./-]{1,50}?)"
     r"(?=[.!?,;]|\s+(?:in|with|at|for)\b|$)",
     re.IGNORECASE,
-)
-COMPANY_IDENTITY_SUFFIXES = {
-    "ag",
-    "bv",
-    "co",
-    "com",
-    "company",
-    "corp",
-    "corporation",
-    "eu",
-    "gmbh",
-    "group",
-    "holding",
-    "holdings",
-    "inc",
-    "incorporated",
-    "io",
-    "limited",
-    "llc",
-    "ltd",
-    "pl",
-    "sa",
-    "sas",
-}
-LEGAL_COMPANY_SUFFIXES = (
-    ("sp", "z", "oo"),
-    ("spolka", "z", "ograniczona", "odpowiedzialnoscia"),
 )
 
 
@@ -622,44 +595,6 @@ def _company_from_title(title: str, url: str) -> str:
             return title.rsplit(separator, 1)[-1].strip()
     hostname = (urlparse(url).hostname or "Job source").removeprefix("www.")
     return hostname.split(".")[0].replace("-", " ").title()
-
-
-def _identity_tokens(value: str) -> list[str]:
-    normalized = unicodedata.normalize("NFKD", value.casefold())
-    normalized = "".join(
-        character for character in normalized if not unicodedata.combining(character)
-    )
-    return re.findall(r"[a-z0-9]+", normalized)
-
-
-def _offer_identity(title: str, company: str) -> tuple[str, str]:
-    company_tokens = _identity_tokens(company)
-    while company_tokens:
-        if any(
-            tuple(company_tokens[-len(suffix) :]) == suffix
-            for suffix in LEGAL_COMPANY_SUFFIXES
-        ):
-            matching_suffix = next(
-                suffix
-                for suffix in LEGAL_COMPANY_SUFFIXES
-                if tuple(company_tokens[-len(suffix) :]) == suffix
-            )
-            del company_tokens[-len(matching_suffix) :]
-            continue
-        if company_tokens[-1] in COMPANY_IDENTITY_SUFFIXES:
-            company_tokens.pop()
-            continue
-        break
-
-    title_without_gender_marker = re.sub(
-        r"[\[(]\s*[mfxd](?:\s*/\s*[mfxd])+\s*[\])]",
-        "",
-        title,
-        flags=re.IGNORECASE,
-    )
-    return " ".join(_identity_tokens(title_without_gender_marker)), " ".join(
-        company_tokens
-    )
 
 
 def _offer_page_text(result: dict) -> str:
@@ -1484,7 +1419,7 @@ def _build_job_offers(
             matched_skills=matched_skills,
             match_reasons=[reason for reason in reasons if reason],
         )
-        identity = _offer_identity(title, company)
+        identity = offer_identity(title, company)
         existing = offers_by_identity.get(identity)
         if existing is not None:
             counts["duplicate_offer"] += 1

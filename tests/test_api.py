@@ -1514,7 +1514,6 @@ def test_new_search_preserves_previous_offers_in_archive(client: TestClient) -> 
     current_urls = {str(offer.url) for offer in results.current.offers}
     archival_urls = {str(offer.url) for offer in results.archival}
     assert current_urls == {
-        "https://example.com/jobs/python",
         "https://example.com/jobs/backend",
     }
     assert archival_urls == {
@@ -1523,7 +1522,45 @@ def test_new_search_preserves_previous_offers_in_archive(client: TestClient) -> 
     }
 
 
-def test_user_can_mark_offer_applied_across_search_history(
+def test_archival_offer_eliminates_normalized_duplicate_from_current_results(
+    client: TestClient,
+) -> None:
+    previous_search = db.create_search(2, "previous", requested_results=1)
+    db.complete_search(
+        previous_search,
+        [
+            services.JobOffer(
+                title="Senior Magento 2 Backend Developer",
+                company="SPORTANO",
+                url="https://example.com/jobs/senior-magento",
+                summary="Previous offer.",
+                score=80,
+            )
+        ],
+    )
+    current_search = db.create_search(2, "current", requested_results=1)
+    db.complete_search(
+        current_search,
+        [
+            services.JobOffer(
+                title="Senior Magento 2 Backend Developer (m/f/d)",
+                company="SPORTANO.COM",
+                url="https://jobs.example.org/offers/456",
+                summary="Rediscovered offer.",
+                score=95,
+            )
+        ],
+    )
+
+    results = db.get_search_results(2)
+
+    assert results.current is not None
+    assert results.current.offers == []
+    assert len(results.archival) == 1
+    assert str(results.archival[0].url) == ("https://example.com/jobs/senior-magento")
+
+
+def test_user_can_mark_archival_offer_applied(
     client: TestClient,
 ) -> None:
     registration = client.post(
@@ -1552,17 +1589,17 @@ def test_user_can_mark_offer_applied_across_search_history(
     db.complete_search(second_search, [offer])
 
     results = client.get("/api/searches/results", headers=headers).json()
-    assert results["current"]["offers"][0]["applied"] is False
+    assert results["current"]["offers"] == []
     assert results["archival"][0]["applied"] is False
 
     response = client.put(
-        f"/api/offers/{results['current']['offers'][0]['id']}/applied",
+        f"/api/offers/{results['archival'][0]['id']}/applied",
         headers=headers,
     )
 
     assert response.status_code == 204
     updated = client.get("/api/searches/results", headers=headers).json()
-    assert updated["current"]["offers"][0]["applied"] is True
+    assert updated["current"]["offers"] == []
     assert updated["archival"][0]["applied"] is True
 
 
