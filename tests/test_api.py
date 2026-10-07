@@ -1061,6 +1061,61 @@ def test_ai_match_percentage_and_description_drive_results(
     assert offers[0].match_reasons == ["Strong overall fit for the candidate profile."]
 
 
+def test_duplicate_company_and_title_offers_keep_strongest_result(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = db.get_profile(2)
+    assert profile is not None
+    first_url = "https://example.com/jobs/senior-magento"
+    second_url = "https://jobs.example.org/offers/456"
+    results = {
+        first_url: {
+            "title": "Senior Magento 2 Backend Developer",
+            "company": "SPORTANO",
+            "url": first_url,
+            "raw_content": "Apply for this active Magento role in Poland.",
+        },
+        second_url: {
+            "title": "Senior Magento 2 Backend Developer (m/f/d)",
+            "company": "SPORTANO.COM",
+            "url": second_url,
+            "raw_content": "Apply for this active Magento role in Poland.",
+        },
+    }
+    monkeypatch.setattr(
+        services,
+        "_assess_job_results",
+        lambda _profile, _results: {
+            first_url: services.JobAssessment(
+                candidate_id=0,
+                is_specific_offer=True,
+                is_active=True,
+                location_matches=True,
+                matching_level=78,
+                match_description="Good match.",
+                reason="Eligible offer.",
+            ),
+            second_url: services.JobAssessment(
+                candidate_id=1,
+                is_specific_offer=True,
+                is_active=True,
+                location_matches=True,
+                matching_level=91,
+                match_description="Strong match.",
+                reason="Eligible offer.",
+            ),
+        },
+    )
+
+    offers, counts = services._build_job_offers(profile, results, set())
+
+    assert len(offers) == 1
+    assert str(offers[0].url) == second_url
+    assert offers[0].score == 91
+    assert counts["duplicate_offer"] == 1
+
+
 def test_search_uses_tavily_content_when_direct_fetch_is_blocked(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

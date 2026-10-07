@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import unicodedata
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
@@ -113,6 +114,33 @@ ADDITIONAL_ROLE_PATTERN = re.compile(
     r"(?P<role>[A-Za-z][A-Za-z0-9 +#./-]{1,50}?)"
     r"(?=[.!?,;]|\s+(?:in|with|at|for)\b|$)",
     re.IGNORECASE,
+)
+COMPANY_IDENTITY_SUFFIXES = {
+    "ag",
+    "bv",
+    "co",
+    "com",
+    "company",
+    "corp",
+    "corporation",
+    "eu",
+    "gmbh",
+    "group",
+    "holding",
+    "holdings",
+    "inc",
+    "incorporated",
+    "io",
+    "limited",
+    "llc",
+    "ltd",
+    "pl",
+    "sa",
+    "sas",
+}
+LEGAL_COMPANY_SUFFIXES = (
+    ("sp", "z", "oo"),
+    ("spolka", "z", "ograniczona", "odpowiedzialnoscia"),
 )
 
 
@@ -594,6 +622,44 @@ def _company_from_title(title: str, url: str) -> str:
             return title.rsplit(separator, 1)[-1].strip()
     hostname = (urlparse(url).hostname or "Job source").removeprefix("www.")
     return hostname.split(".")[0].replace("-", " ").title()
+
+
+def _identity_tokens(value: str) -> list[str]:
+    normalized = unicodedata.normalize("NFKD", value.casefold())
+    normalized = "".join(
+        character for character in normalized if not unicodedata.combining(character)
+    )
+    return re.findall(r"[a-z0-9]+", normalized)
+
+
+def _offer_identity(title: str, company: str) -> tuple[str, str]:
+    company_tokens = _identity_tokens(company)
+    while company_tokens:
+        if any(
+            tuple(company_tokens[-len(suffix) :]) == suffix
+            for suffix in LEGAL_COMPANY_SUFFIXES
+        ):
+            matching_suffix = next(
+                suffix
+                for suffix in LEGAL_COMPANY_SUFFIXES
+                if tuple(company_tokens[-len(suffix) :]) == suffix
+            )
+            del company_tokens[-len(matching_suffix) :]
+            continue
+        if company_tokens[-1] in COMPANY_IDENTITY_SUFFIXES:
+            company_tokens.pop()
+            continue
+        break
+
+    title_without_gender_marker = re.sub(
+        r"[\[(]\s*[mfxd](?:\s*/\s*[mfxd])+\s*[\])]",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    return " ".join(_identity_tokens(title_without_gender_marker)), " ".join(
+        company_tokens
+    )
 
 
 def _offer_page_text(result: dict) -> str:
@@ -1358,6 +1424,7 @@ def _build_job_offers(
         "location_mismatch": 0,
         "criteria_mismatch": 0,
         "excluded_company": 0,
+        "duplicate_offer": 0,
         "tavily_fallback": 0,
     }
     plausible_results: dict[str, dict] = {}
@@ -1370,7 +1437,7 @@ def _build_job_offers(
             continue
         plausible_results[url] = result
 
-    offers: list[JobOffer] = []
+    offers_by_identity: dict[tuple[str, str], JobOffer] = {}
     assessments = _assess_job_results(profile, plausible_results)
     for url, result in plausible_results.items():
         assessment = assessments[url]
@@ -1407,19 +1474,25 @@ def _build_job_offers(
             reasons.append(
                 "Status verified from Tavily content; direct fetch unavailable"
             )
-        offers.append(
-            JobOffer(
-                result_type="job",
-                title=title,
-                company=company,
-                url=result["url"],
-                summary=assessment.match_description,
-                score=assessment.matching_level,
-                matched_skills=matched_skills,
-                match_reasons=[reason for reason in reasons if reason],
-            )
+        offer = JobOffer(
+            result_type="job",
+            title=title,
+            company=company,
+            url=result["url"],
+            summary=assessment.match_description,
+            score=assessment.matching_level,
+            matched_skills=matched_skills,
+            match_reasons=[reason for reason in reasons if reason],
         )
-    return offers, counts
+        identity = _offer_identity(title, company)
+        existing = offers_by_identity.get(identity)
+        if existing is not None:
+            counts["duplicate_offer"] += 1
+            if (offer.score or 0) > (existing.score or 0):
+                offers_by_identity[identity] = offer
+            continue
+        offers_by_identity[identity] = offer
+    return list(offers_by_identity.values()), counts
 
 
 def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str | None]:
@@ -1582,6 +1655,7 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
             + counts["location_mismatch"]
             + counts["criteria_mismatch"]
             + counts["excluded_company"]
+            + counts["duplicate_offer"]
         )
         filter_note = (
             f" {filtered_count} non-detail, inactive, location-mismatched, "
@@ -1601,6 +1675,7 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
             f"inactive, {counts['location_mismatch']} location mismatches, "
             f"{counts['criteria_mismatch']} criteria mismatches, "
             f"{counts['excluded_company']} excluded companies, "
+            f"{counts['duplicate_offer']} duplicate offers, "
             f"{collection_job_count} jobs extracted from collection pages, and "
             f"{counts['tavily_fallback']} Tavily-content fallbacks."
         )
