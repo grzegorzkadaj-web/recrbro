@@ -577,11 +577,13 @@ def test_free_search_supports_ten_ranked_results(
     assert all(not offer["url"].endswith("/0") for offer in offers)
 
 
-def test_search_extracts_page_content_before_active_filtering(
+def test_search_crawls_page_content_before_active_filtering(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
     accept_job_analysis: None,
 ) -> None:
+    crawl_calls: list[dict[str, object]] = []
+
     monkeypatch.setattr(
         services,
         "_resolve_linkedin_page",
@@ -612,16 +614,18 @@ def test_search_extracts_page_content_before_active_filtering(
                 ]
             }
 
-        def extract(self, **_: object) -> dict:
+        def crawl(self, **kwargs: object) -> dict:
+            crawl_calls.append(kwargs)
+            url = str(kwargs["url"])
             return {
                 "results": [
                     {
-                        "url": "https://www.linkedin.com/jobs/view/1001",
-                        "raw_content": "No longer accepting applications",
-                    },
-                    {
-                        "url": "https://www.linkedin.com/jobs/view/1002",
-                        "raw_content": "Apply now for this Python role.",
+                        "url": url,
+                        "raw_content": (
+                            "No longer accepting applications"
+                            if url.endswith("/1001")
+                            else "Apply now for this Python role."
+                        ),
                     },
                 ]
             }
@@ -634,6 +638,18 @@ def test_search_extracts_page_content_before_active_filtering(
     assert response.status_code == 200
     offers = response.json()["offers"]
     assert [offer["company"] for offer in offers] == ["Active Company"]
+    assert [call["url"] for call in crawl_calls] == [
+        "https://www.linkedin.com/jobs/view/1001",
+        "https://www.linkedin.com/jobs/view/1002",
+    ]
+    assert all(
+        call["max_depth"] == 1
+        and call["max_breadth"] == 1
+        and call["limit"] == 1
+        and call["extract_depth"] == "advanced"
+        and call["format"] == "text"
+        for call in crawl_calls
+    )
     assert (
         "non-detail, inactive, location-mismatched, excluded-company, or "
         "unverifiable offers were removed" in response.json()["warning"]
@@ -805,6 +821,7 @@ def test_ai_assesses_activity_and_requested_location(
     results = {
         "https://www.linkedin.com/jobs/view/1": {
             "title": "PHP Developer - Poland",
+            "crawl_content": "Crawled requirements include PHP and Symfony.",
             "linkedin_page_content": "Applications for this vacancy have ended.",
         },
         "https://www.linkedin.com/jobs/view/2": {
@@ -837,6 +854,7 @@ def test_ai_assesses_activity_and_requested_location(
         in captured["messages"][1][1]
     )
     assert '"candidate_profile": {' in captured["messages"][1][1]
+    assert "Crawled requirements include PHP and Symfony." in captured["messages"][1][1]
     assert recorded_usage == [
         {
             "user_id": 2,

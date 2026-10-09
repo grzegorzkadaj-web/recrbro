@@ -602,6 +602,7 @@ def _offer_page_text(result: dict) -> str:
     for field in (
         "title",
         "content",
+        "crawl_content",
         "raw_content",
         "source_page_content",
         "linkedin_page_content",
@@ -1018,9 +1019,10 @@ def _verify_linkedin_urls(
 
 def _is_active_offer(result: dict) -> bool:
     direct_page = str(result.get("linkedin_page_content") or "")
+    crawled_page = str(result.get("crawl_content") or "")
     extracted_page = str(result.get("raw_content") or "")
     source_page = str(result.get("source_page_content") or "")
-    if not direct_page and not extracted_page and not source_page:
+    if not direct_page and not crawled_page and not extracted_page and not source_page:
         return False
     if direct_page and any(
         marker in direct_page.casefold() for marker in CLOSED_OFFER_MARKERS
@@ -1054,9 +1056,10 @@ def _offer_analysis_text(result: dict) -> str:
     sections = [
         f"Title: {str(result.get('title') or '')[:500]}",
         f"Search snippet: {str(result.get('content') or '')[:2500]}",
+        f"Tavily crawled offer page: {str(result.get('crawl_content') or '')[:10000]}",
         f"Extracted page: {str(result.get('raw_content') or '')[:7000]}",
         f"Direct source page: {str(result.get('source_page_content') or '')[:7000]}",
-        f"Direct source page: {direct_page[:7000]}",
+        f"Direct LinkedIn page: {direct_page[:7000]}",
         f"Status excerpts: {_status_excerpts(direct_page)[:4000]}",
     ]
     return "\n".join(sections)
@@ -1296,6 +1299,62 @@ def _populate_missing_page_content(
                 results_by_url[url]["raw_content"] = extracted.get("raw_content") or ""
 
 
+def _crawl_job_page_content(
+    client: TavilyClient, results_by_url: dict[str, dict]
+) -> tuple[int, str | None]:
+    crawl = getattr(client, "crawl", None)
+    if not callable(crawl):
+        _populate_missing_page_content(client, results_by_url)
+        return 0, None
+
+    failed_count = 0
+    first_error: str | None = None
+    for url, result in results_by_url.items():
+        try:
+            response = crawl(
+                url=url,
+                max_depth=1,
+                max_breadth=1,
+                limit=1,
+                instructions=(
+                    "Fetch the complete content of this specific job offer, including "
+                    "responsibilities, requirements, location, work mode, contract, "
+                    "salary, and application status."
+                ),
+                extract_depth="advanced",
+                format="text",
+                timeout=60,
+            )
+        except TAVILY_ERRORS as error:
+            failed_count += 1
+            first_error = first_error or str(error)
+            continue
+
+        crawled_results = response.get("results", [])
+        crawled_result = next(
+            (
+                crawled
+                for crawled in crawled_results
+                if (
+                    _canonical_linkedin_job_url(str(crawled.get("url") or ""))
+                    or _canonical_external_url(str(crawled.get("url") or ""))
+                )
+                == url
+            ),
+            crawled_results[0] if len(crawled_results) == 1 else None,
+        )
+        content = (
+            str(crawled_result.get("raw_content") or "")
+            if crawled_result is not None
+            else ""
+        )
+        if not content:
+            failed_count += 1
+            continue
+        result["crawl_content"] = content
+    return failed_count, first_error
+
+
 def _rank_offer(
     title: str, content: str, profile: Profile
 ) -> tuple[float, list[str], list[str]]:
@@ -1393,13 +1452,7 @@ def _build_job_offers(
         if any(name in company.casefold() for name in excluded):
             counts["excluded_company"] += 1
             continue
-        content = (
-            result.get("raw_content")
-            or result.get("content")
-            or _offer_page_text(
-                {"linkedin_page_content": result.get("linkedin_page_content")}
-            )
-        )
+        content = _offer_page_text(result)
         matched_skills = _matched_profile_skills(content, profile)
         reasons = [assessment.match_description]
         if assessment.reason.startswith("Deterministic content validation"):
@@ -1445,6 +1498,7 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
     discovered_count = 0
     duplicate_count = 0
     collection_job_count = 0
+    tavily_crawl_failures = 0
     eldorado_count = 0
     eldorado_page_failures = 0
     source_warnings: list[str] = []
@@ -1533,7 +1587,6 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
     eldorado_page_failures = _populate_eldorado_page_content(job_results)
     if client is not None:
         try:
-            _populate_missing_page_content(client, job_results)
             _populate_missing_page_content(client, collection_results)
             collection_candidates = _extract_collection_jobs(
                 collection_results,
@@ -1567,12 +1620,22 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
                         and not _looks_like_collection(result)
                     }
                 )
-                _populate_missing_page_content(client, collection_jobs)
                 collection_job_count = len(collection_jobs)
                 for url, result in collection_jobs.items():
                     job_results.setdefault(url, result)
         except TAVILY_ERRORS as error:
             source_warnings.append(f"Tavily content extraction failed: {error}")
+        tavily_crawl_failures, crawl_error = _crawl_job_page_content(
+            client, job_results
+        )
+        if tavily_crawl_failures:
+            warning = (
+                f"Tavily Crawl could not enrich {tavily_crawl_failures} job offer"
+                f"{'s' if tavily_crawl_failures != 1 else ''}"
+            )
+            if crawl_error:
+                warning += f": {crawl_error}"
+            source_warnings.append(warning + ".")
 
     excluded = {company.casefold() for company in profile.excluded_companies}
     offers, counts = _build_job_offers(profile, job_results, excluded)
@@ -1612,6 +1675,7 @@ def search_jobs(profile: Profile, limit: int) -> tuple[str, list[JobOffer], str 
             f"{counts['excluded_company']} excluded companies, "
             f"{counts['duplicate_offer']} duplicate offers, "
             f"{collection_job_count} jobs extracted from collection pages, and "
+            f"{tavily_crawl_failures} Tavily Crawl failures, and "
             f"{counts['tavily_fallback']} Tavily-content fallbacks."
         )
         warning_parts.append(

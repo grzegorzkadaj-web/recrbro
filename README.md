@@ -36,8 +36,10 @@ offers, and ranks the remaining roles against the candidate's requirements.
   offers, balance events, and usage events.
 - `src/recrbro/services.py`: PDF extraction, AI analysis, Tavily and
   CzyJestEldorado MCP discovery, source-aware URL validation, and deterministic
-  ranking. LinkedIn and CzyJestEldorado offers additionally receive
-  authoritative direct-page validation.
+  ranking. Tavily Crawl fetches each individual offer's detailed content before
+  the AI model reassesses profile fit and eligibility. LinkedIn and
+  CzyJestEldorado offers additionally receive authoritative direct-page
+  validation.
 - `src/recrbro/agent.py`: LangGraph agent exposed over AG-UI.
 - `web`: responsive Next.js 16 and CopilotKit interface.
 
@@ -51,7 +53,8 @@ The backend uses OpenAI models at three points:
   the account has no credit, CV extraction uses the visibly labelled local
   keyword fallback.
 - Offer validation, location and criteria eligibility, match percentage, and
-  fit/gap explanations use `OPENAI_JOB_ANALYSIS_MODEL`.
+  fit/gap explanations use `OPENAI_JOB_ANALYSIS_MODEL` after individual offer
+  pages are enriched through Tavily Crawl.
 
 Model names and accounting rates are configured through the backend
 environment:
