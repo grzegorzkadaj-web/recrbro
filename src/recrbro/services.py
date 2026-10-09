@@ -23,6 +23,7 @@ from urllib.request import Request, urlopen
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
+from requests import RequestException
 from tavily import TavilyClient
 from tavily.errors import (
     BadRequestError,
@@ -95,6 +96,7 @@ TAVILY_ERRORS = (
     TavilyTimeoutError,
     UsageLimitExceededError,
 )
+TAVILY_REQUEST_ERRORS = (*TAVILY_ERRORS, RequestException)
 JOB_ANALYSIS_BATCH_SIZE = 5
 JOB_ANALYSIS_ATTEMPTS = 2
 JOB_MATCH_QUERY_TEMPLATE = """You act as a recruiter.
@@ -1307,9 +1309,7 @@ def _crawl_job_page_content(
         _populate_missing_page_content(client, results_by_url)
         return 0, None
 
-    failed_count = 0
-    first_error: str | None = None
-    for url, result in results_by_url.items():
+    def crawl_job(url: str) -> tuple[str, str, str | None]:
         try:
             response = crawl(
                 url=url,
@@ -1323,12 +1323,10 @@ def _crawl_job_page_content(
                 ),
                 extract_depth="advanced",
                 format="text",
-                timeout=60,
+                timeout=30,
             )
-        except TAVILY_ERRORS as error:
-            failed_count += 1
-            first_error = first_error or str(error)
-            continue
+        except TAVILY_REQUEST_ERRORS as error:
+            return url, "", str(error)
 
         crawled_results = response.get("results", [])
         crawled_result = next(
@@ -1348,10 +1346,21 @@ def _crawl_job_page_content(
             if crawled_result is not None
             else ""
         )
-        if not content:
+        return url, content, None
+
+    urls = list(results_by_url)
+    if not urls:
+        return 0, None
+    failed_count = 0
+    first_error: str | None = None
+    with ThreadPoolExecutor(max_workers=min(8, len(urls))) as executor:
+        crawled_pages = executor.map(crawl_job, urls)
+        for url, content, error in crawled_pages:
+            if content:
+                results_by_url[url]["crawl_content"] = content
+                continue
             failed_count += 1
-            continue
-        result["crawl_content"] = content
+            first_error = first_error or error
     return failed_count, first_error
 
 

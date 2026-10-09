@@ -638,10 +638,10 @@ def test_search_crawls_page_content_before_active_filtering(
     assert response.status_code == 200
     offers = response.json()["offers"]
     assert [offer["company"] for offer in offers] == ["Active Company"]
-    assert [call["url"] for call in crawl_calls] == [
+    assert {call["url"] for call in crawl_calls} == {
         "https://www.linkedin.com/jobs/view/1001",
         "https://www.linkedin.com/jobs/view/1002",
-    ]
+    }
     assert all(
         call["max_depth"] == 1
         and call["max_breadth"] == 1
@@ -655,6 +655,43 @@ def test_search_crawls_page_content_before_active_filtering(
         "unverifiable offers were removed" in response.json()["warning"]
     )
     assert "Diagnostics:" in response.json()["warning"]
+
+
+def test_search_degrades_when_tavily_crawl_transport_fails(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    accept_job_analysis: None,
+) -> None:
+    class FakeTavilyClient:
+        def __init__(self, api_key: str):
+            assert api_key == "test-key"
+
+        def search(self, **_: object) -> dict:
+            return {
+                "results": [
+                    {
+                        "title": "Python Developer - Active Company",
+                        "url": "https://example.com/jobs/python",
+                        "content": "Python role in Poland.",
+                        "raw_content": "Apply now for this active Python role.",
+                    }
+                ]
+            }
+
+        def crawl(self, **_: object) -> dict:
+            raise services.RequestException("crawl connection interrupted")
+
+    monkeypatch.setattr(services, "TAVILY_API_KEY", "test-key")
+    monkeypatch.setattr(services, "TavilyClient", FakeTavilyClient)
+
+    response = client.post("/api/users/2/search", json={"max_results": 3})
+
+    assert response.status_code == 200
+    assert len(response.json()["offers"]) == 1
+    assert (
+        "Tavily Crawl could not enrich 1 job offer: crawl connection interrupted."
+        in response.json()["warning"]
+    )
 
 
 def test_resolved_collection_page_is_not_a_job_detail(
