@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import (
+    BackgroundTasks,
     Depends,
     FastAPI,
     File,
@@ -39,6 +41,7 @@ from recrbro.db import (
     list_users,
     mark_offer_applied,
     search_owner_and_profile,
+    start_search,
     update_profile,
     usage_summary,
     user_for_session,
@@ -65,6 +68,7 @@ from recrbro.services import (
 )
 
 security = HTTPBearer(auto_error=False)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -118,6 +122,8 @@ def _run_search(search_id: int) -> SearchJob:
     if context is None:
         raise LookupError("Search not found.")
     user, profile, job = context
+    if job.status == "queued" and not start_search(search_id):
+        raise RuntimeError("Queued search could not be started.")
     try:
         query, offers, warning = search_jobs(
             profile, min(job.requested_results, user.result_limit)
@@ -130,6 +136,13 @@ def _run_search(search_id: int) -> SearchJob:
     if completed is None:
         raise LookupError("Completed search could not be loaded.")
     return completed
+
+
+def _run_search_in_background(search_id: int) -> None:
+    try:
+        _run_search(search_id)
+    except Exception:
+        logger.exception("Background search %s failed.", search_id)
 
 
 @app.get("/health")
@@ -277,7 +290,11 @@ async def development_upload_cv(
 
 
 @app.post("/api/searches", response_model=SearchJob, status_code=202)
-def search(payload: SearchRequest, user: User = Depends(current_user)) -> SearchJob:
+def search(
+    payload: SearchRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(current_user),
+) -> SearchJob:
     profile = _profile_for(user)
     limit = min(payload.max_results, user.result_limit, 10)
     if not profile.core_skills:
@@ -285,10 +302,21 @@ def search(payload: SearchRequest, user: User = Depends(current_user)) -> Search
             status_code=422, detail="Add at least one core skill before searching."
         )
     try:
-        search_id = create_search(user.id, build_search_query(profile), limit)
-        return _run_search(search_id)
+        search_id = create_search(
+            user.id,
+            build_search_query(profile),
+            limit,
+            status="queued",
+        )
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+    job = get_search(search_id, user.id)
+    if job is None:
+        raise HTTPException(
+            status_code=500, detail="Queued search could not be loaded."
+        )
+    background_tasks.add_task(_run_search_in_background, search_id)
+    return job
 
 
 @app.post(

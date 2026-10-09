@@ -31,7 +31,7 @@ offers, and ranks the remaining roles against the candidate's requirements.
 ## Architecture
 
 - `src/recrbro/api.py`: FastAPI REST API, account boundary, live search
-  execution, and security headers.
+  queuing and background execution, and security headers.
 - `src/recrbro/db.py`: SQLite schema, migrations, sessions, profiles, searches,
   offers, balance events, and usage events.
 - `src/recrbro/services.py`: PDF extraction, AI analysis, Tavily and

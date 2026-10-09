@@ -100,8 +100,11 @@ def test_database_startup_removes_persisted_collection_pages(
     assert remaining_urls == {"https://example.com/jobs/python-developer"}
 
 
-def test_search_reads_fail_interrupted_searches(client: TestClient) -> None:
-    search_id = db.create_search(2, "interrupted", requested_results=1)
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_search_reads_fail_interrupted_searches(
+    client: TestClient, status: str
+) -> None:
+    search_id = db.create_search(2, "interrupted", requested_results=1, status=status)
     with db.connection() as database:
         database.execute(
             "UPDATE searches SET created_at = '2026-01-01T00:00:00+00:00' WHERE id = ?",
@@ -427,9 +430,18 @@ def test_free_account_search_runs_immediately(
     )
 
     assert response.status_code == 202
-    assert response.json()["status"] == "complete"
+    assert response.json()["status"] == "queued"
     assert response.json()["requested_results"] == 10
-    assert len(response.json()["offers"]) == 10
+    assert response.json()["offers"] == []
+
+    completed = client.get(
+        f"/api/searches/{response.json()['id']}",
+        headers=headers,
+    )
+
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "complete"
+    assert len(completed.json()["offers"]) == 10
 
 
 def test_agent_requires_authentication(client: TestClient) -> None:

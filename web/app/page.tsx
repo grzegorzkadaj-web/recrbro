@@ -162,6 +162,7 @@ const SEARCH_PROGRESS_MESSAGES: SearchProgressMessage[] = [
 ];
 
 const RANKING_PROGRESS_START = 5;
+const SEARCH_POLL_INTERVAL_MS = 2000;
 
 const emptyProfile: Profile = {
   user_id: 0,
@@ -216,6 +217,10 @@ async function api<T>(
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 function TurnstileWidget({
@@ -620,12 +625,18 @@ function Dashboard({
         body: JSON.stringify({ max_results: maxResults }),
       });
       setSearchJob(job);
-      if (job.status !== "complete") {
-        throw new Error(job.error ?? "Search did not complete.");
+      let completedJob = job;
+      while (completedJob.status === "queued" || completedJob.status === "running") {
+        await wait(SEARCH_POLL_INTERVAL_MS);
+        completedJob = await api<SearchJob>(`/api/searches/${job.id}`, token);
+        setSearchJob(completedJob);
+      }
+      if (completedJob.status !== "complete") {
+        throw new Error(completedJob.error ?? "Search did not complete.");
       }
       await refreshSearchResults();
-      setWarning(job.warning);
-      setStatus(`Found ${job.offers.length} ranked matches`);
+      setWarning(completedJob.warning);
+      setStatus(`Found ${completedJob.offers.length} ranked matches`);
       setIsSearching(false);
       setBusy(false);
       await refreshAccount().catch(() => undefined);

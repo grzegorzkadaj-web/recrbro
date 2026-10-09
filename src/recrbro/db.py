@@ -60,7 +60,7 @@ def _fail_stale_searches(
         SET status = 'failed',
             error = 'Search was interrupted before completion.',
             completed_at = ?
-        WHERE status = 'running' AND created_at < ?{user_filter}
+        WHERE status IN ('queued', 'running') AND created_at < ?{user_filter}
         """,
         parameters,
     )
@@ -621,6 +621,19 @@ def create_search(
             ),
         )
         return int(cursor.lastrowid)
+
+
+def start_search(search_id: int) -> bool:
+    with connection() as database:
+        cursor = database.execute(
+            """
+            UPDATE searches
+            SET status = 'running', claimed_at = ?, attempts = attempts + 1
+            WHERE id = ? AND status = 'queued' AND available_at <= ?
+            """,
+            (_now(), search_id, _now()),
+        )
+        return cursor.rowcount == 1
 
 
 def complete_search(
